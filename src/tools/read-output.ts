@@ -8,6 +8,8 @@ export const readOutputSchema = z.object({
   session_id: z.string().describe("The session ID to read output from"),
   full_screen: z.boolean().optional().default(false)
     .describe("Read full scrollback history instead of just the visible screen"),
+  raw_ansi: z.boolean().optional().default(false)
+    .describe("Include ANSI color/style escape codes in the output (useful for comparing terminal rendering)"),
 });
 
 export type ReadOutputArgs = z.infer<typeof readOutputSchema>;
@@ -19,7 +21,7 @@ export async function handleReadOutput(
 ): Promise<ReadOutputOutput> {
   const session = sessionManager.getSession(args.session_id);
 
-  let output = session.terminal.readScreen(args.full_screen);
+  let output = session.terminal.readScreen(args.full_screen, args.raw_ansi);
   output = sanitize(output, { maxChars: config.maxOutput });
 
   if (config.redactSecrets) {

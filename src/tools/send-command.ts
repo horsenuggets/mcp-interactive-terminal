@@ -95,7 +95,7 @@ export async function handleSendCommand(
   sessionManager.touchSession(args.session_id);
 
   // Write input with newline
-  session.terminal.write(args.input + "\n");
+  session.terminal.write(args.input + session.terminal.enterKey);
 
   // Wait for output
   const { output, isComplete } = await session.terminal.waitForOutput(args.timeout_ms);

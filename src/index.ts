@@ -92,10 +92,10 @@ function createServer(cfg?: ServerConfig) {
     "Read the current terminal screen without sending any input. Safe read-only operation.",
     readOutputSchema.shape,
     { title: "Read Output", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    async ({ session_id, full_screen }) => {
+    async ({ session_id, full_screen, raw_ansi }) => {
       try {
         const result = await handleReadOutput(
-          { session_id, full_screen },
+          { session_id, full_screen, raw_ansi },
           sessionManager,
           config,
         );

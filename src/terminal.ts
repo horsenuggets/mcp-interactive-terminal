@@ -79,6 +79,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
     get isAlive() { return isAlive; },
     promptPattern,
     mode: "pty",
+    get enterKey() { return "\r"; },
 
     write(data: string) {
       if (!isAlive) throw new Error("Session is not alive");
@@ -86,22 +87,89 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
       ptyProcess.write(data);
     },
 
-    readScreen(fullScreen = false): string {
+    readScreen(fullScreen = false, rawAnsi = false): string {
       const buffer = xterm.buffer.active;
       const lines: string[] = [];
-      if (fullScreen) {
-        const start = -buffer.viewportY;
-        for (let i = start; i < buffer.length; i++) {
+
+      const getRows = (): { start: number; end: number } => {
+        if (fullScreen) {
+          return { start: -buffer.viewportY, end: buffer.length };
+        }
+        return { start: buffer.baseY, end: buffer.baseY + rows };
+      };
+
+      const { start, end } = getRows();
+
+      if (!rawAnsi) {
+        for (let i = start; i < end; i++) {
           const line = buffer.getLine(i);
           if (line) lines.push(line.translateToString(true));
         }
       } else {
-        for (let i = 0; i < rows; i++) {
-          const line = buffer.getLine(buffer.baseY + i);
-          if (line) lines.push(line.translateToString(true));
+        // Reconstruct ANSI escape codes from cell data
+        for (let i = start; i < end; i++) {
+          const bufLine = buffer.getLine(i);
+          if (!bufLine) continue;
+          let lineStr = "";
+          let prevFg = -1, prevBg = -1, prevBold = 0, prevDim = 0, prevItalic = 0;
+          const cell = (buffer as any).getNullCell ? (buffer as any).getNullCell() : undefined;
+          for (let x = 0; x < bufLine.length; x++) {
+            const c = cell ? (bufLine.getCell(x, cell), cell) : bufLine.getCell(x);
+            if (!c) continue;
+            const ch = c.getChars();
+            const w = c.getWidth();
+            if (w === 0) continue; // skip continuation cells
+
+            // Build SGR sequences for style changes
+            const sgr: string[] = [];
+            const bold = c.isBold();
+            const dim = c.isDim();
+            const italic = c.isItalic();
+
+            if (bold !== prevBold) sgr.push(bold ? "1" : "22");
+            if (dim !== prevDim) sgr.push(dim ? "2" : "22");
+            if (italic !== prevItalic) sgr.push(italic ? "3" : "23");
+
+            // Foreground
+            let fg = -1;
+            if (c.isFgRGB()) {
+              const v = c.getFgColor();
+              fg = v;
+              if (fg !== prevFg) sgr.push(`38;2;${(v >> 16) & 0xff};${(v >> 8) & 0xff};${v & 0xff}`);
+            } else if (c.isFgPalette()) {
+              fg = c.getFgColor();
+              if (fg !== prevFg) sgr.push(`38;5;${fg}`);
+            } else if (!c.isFgDefault() || prevFg !== -1) {
+              if (prevFg !== -1) { sgr.push("39"); fg = -1; }
+            }
+
+            // Background
+            let bg = -1;
+            if (c.isBgRGB()) {
+              const v = c.getBgColor();
+              bg = v;
+              if (bg !== prevBg) sgr.push(`48;2;${(v >> 16) & 0xff};${(v >> 8) & 0xff};${v & 0xff}`);
+            } else if (c.isBgPalette()) {
+              bg = c.getBgColor();
+              if (bg !== prevBg) sgr.push(`48;5;${bg}`);
+            } else if (!c.isBgDefault() || prevBg !== -1) {
+              if (prevBg !== -1) { sgr.push("49"); bg = -1; }
+            }
+
+            if (sgr.length > 0) lineStr += `\x1b[${sgr.join(";")}m`;
+            lineStr += ch || " ";
+
+            prevFg = fg; prevBg = bg; prevBold = bold; prevDim = dim; prevItalic = italic;
+          }
+          // Reset at end of line
+          if (prevFg !== -1 || prevBg !== -1 || prevBold || prevDim || prevItalic) {
+            lineStr += "\x1b[0m";
+          }
+          lines.push(lineStr);
         }
       }
-      while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+
+      while (lines.length > 0 && lines[lines.length - 1].replace(/\x1b\[[0-9;]*m/g, "").trim() === "") lines.pop();
       return lines.join("\n");
     },
 
@@ -274,6 +342,7 @@ export async function createPipeTerminal(options: TerminalOptions): Promise<Term
       get isAlive() { return isAlive; },
       promptPattern,
       mode: "pipe",
+      get enterKey() { return "\n"; },
 
       write(data: string) {
         if (!isAlive) throw new Error("Session is not alive");
@@ -282,7 +351,7 @@ export async function createPipeTerminal(options: TerminalOptions): Promise<Term
         proc.stdin!.write(data);
       },
 
-      readScreen(fullScreen = false): string {
+      readScreen(fullScreen = false, _rawAnsi = false): string {
         if (fullScreen) {
           return stripAnsi(outputLines.join("\n"));
         }

@@ -50,7 +50,7 @@ export async function handleConfirmDangerousCommand(
   sessionManager.touchSession(args.session_id);
 
   // Execute the command
-  session.terminal.write(args.input + "\n");
+  session.terminal.write(args.input + session.terminal.enterKey);
 
   // Wait for output with a longer default timeout for dangerous operations
   const { output, isComplete } = await session.terminal.waitForOutput(

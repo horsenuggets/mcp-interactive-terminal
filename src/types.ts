@@ -76,8 +76,10 @@ export interface TerminalWrapper {
   isAlive: boolean;
   promptPattern: RegExp | null;
   mode: "pty" | "pipe";
+  /** The character that means "execute/enter" — \r for PTY, \n for pipe */
+  get enterKey(): string;
   write(data: string): void;
-  readScreen(fullScreen?: boolean): string;
+  readScreen(fullScreen?: boolean, rawAnsi?: boolean): string;
   waitForOutput(timeoutMs: number): Promise<{ output: string; isComplete: boolean }>;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
