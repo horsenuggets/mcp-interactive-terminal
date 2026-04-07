@@ -30,6 +30,14 @@ const KNOWN_PROMPTS: RegExp[] = [
   /^\d+\.\d+\.\d+\.\d+:\d+>\s*$/,
   // Generic "name> " pattern
   /^[a-zA-Z_][\w.-]*>\s*$/,
+  // Windows cmd.exe: "C:\Users\Admin>", "D:\project>"
+  /^[A-Z]:\\[^>]*>\s*$/,
+  // Windows cmd.exe with username: "user@HOSTNAME C:\path>"
+  /^[a-zA-Z_][\w.-]*@[a-zA-Z_][\w.-]*\s+[A-Z]:\\[^>]*>\s*$/,
+  // Windows PowerShell: "PS C:\Users\Admin> "
+  /^PS\s+[A-Z]:\\[^>]*>\s*$/,
+  // PowerShell with prefix: "PS> ", "PS>"
+  /^PS>\s*$/,
 ];
 
 /**
@@ -59,9 +67,10 @@ export function detectPromptPattern(startupOutput: string): RegExp | null {
     }
   }
 
-  // Heuristic: if the last line is short (< 60 chars) and ends with a common
-  // prompt character, treat it as a prompt
-  if (lastLine.length < 60 && /[$#%>:]\s*$/.test(lastLine)) {
+  // Heuristic: if the last line is short-ish and ends with a common
+  // prompt character, treat it as a prompt. Windows paths can be long,
+  // so allow up to 120 chars.
+  if (lastLine.length < 120 && /[$#%>:]\s*$/.test(lastLine)) {
     const escaped = escapeRegex(lastLine);
     return new RegExp(escaped + "\\s*$");
   }

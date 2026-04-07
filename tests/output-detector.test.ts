@@ -27,6 +27,29 @@ describe("detectPromptPattern", () => {
     expect(detectPromptPattern("")).toBeNull();
     expect(detectPromptPattern("\n\n\n")).toBeNull();
   });
+
+  it("detects Windows cmd.exe prompt", () => {
+    const pattern = detectPromptPattern("Microsoft Windows [Version 10.0.26200]\n\nC:\\Users\\Admin>");
+    expect(pattern).not.toBeNull();
+    expect(pattern!.test("C:\\Users\\Admin>")).toBe(true);
+  });
+
+  it("detects Windows cmd.exe prompt with username@hostname", () => {
+    const pattern = detectPromptPattern("user@DESKTOP C:\\Users\\Admin>");
+    expect(pattern).not.toBeNull();
+    expect(pattern!.test("user@DESKTOP C:\\Users\\Admin>")).toBe(true);
+  });
+
+  it("detects Windows PowerShell prompt", () => {
+    const pattern = detectPromptPattern("Windows PowerShell\nCopyright (C) Microsoft\n\nPS C:\\Users\\Admin>");
+    expect(pattern).not.toBeNull();
+    expect(pattern!.test("PS C:\\Users\\Admin>")).toBe(true);
+  });
+
+  it("detects bare PowerShell prompt", () => {
+    const pattern = detectPromptPattern("PS>");
+    expect(pattern).not.toBeNull();
+  });
 });
 
 describe("endsWithPrompt", () => {
