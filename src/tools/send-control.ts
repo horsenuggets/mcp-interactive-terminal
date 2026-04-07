@@ -89,6 +89,10 @@ export async function handleSendControl(
       session.terminal.write(sequence);
     }
   } else {
+    // Write the raw byte to the PTY. In raw mode the \x03 byte is passed
+    // through to the app's stdin — no kernel SIGINT is generated. Sending
+    // an explicit SIGINT would bypass app-level double-press handlers (the
+    // app sees the signal before the stdin byte) and cause premature exit.
     session.terminal.write(sequence);
   }
 
