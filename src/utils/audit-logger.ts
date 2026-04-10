@@ -19,6 +19,7 @@ export type AuditEvent =
   | "command_confirmed_danger"
   | "command_blocked_path"
   | "control"
+  | "mouse"
   | "read_output"
   | "list_sessions"
   | "sandbox_init"

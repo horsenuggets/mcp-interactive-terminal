@@ -21,6 +21,7 @@ import { readOutputSchema, handleReadOutput } from "./tools/read-output.js";
 import { handleListSessions } from "./tools/list-sessions.js";
 import { closeSessionSchema, handleCloseSession } from "./tools/close-session.js";
 import { sendControlSchema, handleSendControl } from "./tools/send-control.js";
+import { sendMouseSchema, handleSendMouse } from "./tools/send-mouse.js";
 import {
   confirmDangerousCommandSchema,
   handleConfirmDangerousCommand,
@@ -67,13 +68,13 @@ function createServer(cfg?: ServerConfig) {
 
   server.tool(
     "send_command",
-    "Send a command/input to an interactive session and wait for output. Appends newline automatically. Returns clean text output (no ANSI codes). If a dangerous command is detected, you must use confirm_dangerous_command first.",
+    "Send a command/input to an interactive session and wait for output. Appends a newline by default (pass newline=false to type raw text without submitting — useful for filling a TUI input before mouse clicks or drags). Returns clean text output (no ANSI codes). If a dangerous command is detected, you must use confirm_dangerous_command first.",
     sendCommandSchema.shape,
     { title: "Send Command", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    async ({ session_id, input, timeout_ms, max_output_chars }) => {
+    async ({ session_id, input, newline, timeout_ms, max_output_chars }) => {
       try {
         const result = await handleSendCommand(
-          { session_id, input, timeout_ms, max_output_chars },
+          { session_id, input, newline, timeout_ms, max_output_chars },
           sessionManager,
           config,
         );
@@ -153,13 +154,31 @@ function createServer(cfg?: ServerConfig) {
     "Send a control character or special key to a session (e.g., ctrl+c to interrupt, ctrl+d to send EOF, arrow keys, tab for completion).",
     sendControlSchema.shape,
     { title: "Send Control", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    async ({ session_id, control }) => {
+    async ({ session_id, control, count }) => {
       try {
         const result = await handleSendControl(
-          { session_id, control },
+          { session_id, control, count },
           sessionManager,
           config,
         );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "send_mouse",
+    "Send a mouse event (click, press, release, or drag) to an interactive session using the SGR mouse protocol. Use this to click buttons, position the cursor in text inputs, or drag-select text in TUI applications. Row/col are 1-indexed. For 'drag', pass to_col and to_row for the endpoint.",
+    sendMouseSchema.shape,
+    { title: "Send Mouse", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async (input) => {
+      try {
+        const result = await handleSendMouse(input, sessionManager, config);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {

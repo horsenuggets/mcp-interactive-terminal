@@ -36,7 +36,9 @@ function findDisallowedPath(input: string, sessionManager: SessionManager): stri
 
 export const sendCommandSchema = z.object({
   session_id: z.string().describe("The session ID to send input to"),
-  input: z.string().describe("The command/input to send (newline appended automatically)"),
+  input: z.string().describe("The command/input to send"),
+  newline: z.boolean().optional().default(true)
+    .describe("Append a newline (submit) after the input. Set to false to type raw text into an input field without submitting — useful for TUI apps where you want to fill an input before triggering other events like mouse clicks."),
   timeout_ms: z.number().min(100).max(60000).optional().default(5000)
     .describe("Max time to wait for output (ms)"),
   max_output_chars: z.number().min(100).optional()
@@ -94,8 +96,9 @@ export async function handleSendCommand(
   audit("command", args.session_id, { input: args.input });
   sessionManager.touchSession(args.session_id);
 
-  // Write input with newline
-  session.terminal.write(args.input + session.terminal.enterKey);
+  // Write input, optionally with newline
+  const suffix = args.newline === false ? "" : session.terminal.enterKey;
+  session.terminal.write(args.input + suffix);
 
   // Wait for output
   const { output, isComplete } = await session.terminal.waitForOutput(args.timeout_ms);
