@@ -20,18 +20,28 @@ import { audit } from "../utils/audit-logger.js";
  *   0  = left button, plain press
  *   32 = motion-while-button-held (add to base button for drag events,
  *        so left-drag is button code 0 + 32 = 32)
+ *   35 = motion-without-button-held (bit 32 | base button 3 = "no button")
+ *        Used for pure hover events — mode 1003 "any-motion" tracking.
+ *        Apps that enable MOUSE_ANY (DEC 1003) will receive these for
+ *        onMouseEnter/onMouseLeave / hover highlight UI.
  *
  * Row/col are 1-indexed. (1, 1) is the top-left cell of the terminal.
  *
  * Sequences emitted:
- *   - "click":  press at (col, row), release at (col, row)
- *   - "press":  just the press (use with a later "release")
+ *   - "click":   press at (col, row), release at (col, row)
+ *   - "press":   just the press (use with a later "release")
  *   - "release": just the release
- *   - "drag":   press at (fromCol, fromRow), drag through
- *               (toCol, toRow), release at (toCol, toRow).
- *               Emits motion events in a straight line between the
- *               two points so apps that track drag selection see
- *               continuous movement, not just the endpoints.
+ *   - "drag":    press at (fromCol, fromRow), drag through
+ *                (toCol, toRow), release at (toCol, toRow).
+ *                Emits motion events in a straight line between the
+ *                two points so apps that track drag selection see
+ *                continuous movement, not just the endpoints.
+ *   - "move":    pure hover — a no-button motion event at (col, row).
+ *                If to_col/to_row are supplied, sweeps along the line
+ *                to simulate the mouse entering the target cell from
+ *                outside (useful for triggering onMouseEnter on a
+ *                specific element). Requires the app to have enabled
+ *                DEC 1003 mouse tracking.
  */
 
 const MOUSE_WAIT_MS = 200;
@@ -50,14 +60,23 @@ function sgrDrag(col: number, row: number): string {
   return `\x1b[<32;${col};${row}M`;
 }
 
+function sgrMove(col: number, row: number): string {
+  // No-button motion: motion bit 32 | "no button" 3 = 35. Delivered by
+  // DEC 1003 "any-motion" tracking and consumed by apps as a hover.
+  return `\x1b[<35;${col};${row}M`;
+}
+
 export const sendMouseSchema = z.object({
   session_id: z.string().describe("The session ID"),
   action: z
-    .enum(["click", "press", "release", "drag"])
+    .enum(["click", "press", "release", "drag", "move"])
     .describe(
       "The mouse action to perform. 'click' is press+release at one point. " +
         "'drag' is press at (col,row), motion through (to_col,to_row), release at the end. " +
-        "'press' and 'release' let you build more complex sequences manually.",
+        "'press' and 'release' let you build more complex sequences manually. " +
+        "'move' is a pure hover (no button) — emits a DEC 1003 any-motion event at (col,row), " +
+        "or sweeps along a line from (col,row) to (to_col,to_row) if both are supplied. " +
+        "Used to trigger onMouseEnter / hover highlight UI without clicking.",
     ),
   col: z
     .number()
@@ -155,6 +174,24 @@ export async function handleSendMouse(
         sequence += sgrDrag(c, r);
       }
       sequence += sgrRelease(0, args.to_col, args.to_row);
+      break;
+    }
+    case "move": {
+      // Pure hover: no-button motion events. If to_col/to_row are
+      // supplied, sweep from start to end so the app sees the cursor
+      // enter the target cell from outside. Otherwise emit a single
+      // motion at (col,row).
+      if (args.to_col !== undefined && args.to_row !== undefined) {
+        const points = bresenhamLine(
+          args.col,
+          args.row,
+          args.to_col,
+          args.to_row,
+        );
+        sequence = points.map(([c, r]) => sgrMove(c, r)).join("");
+      } else {
+        sequence = sgrMove(args.col, args.row);
+      }
       break;
     }
   }

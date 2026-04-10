@@ -173,7 +173,7 @@ function createServer(cfg?: ServerConfig) {
 
   server.tool(
     "send_mouse",
-    "Send a mouse event (click, press, release, or drag) to an interactive session using the SGR mouse protocol. Use this to click buttons, position the cursor in text inputs, or drag-select text in TUI applications. Row/col are 1-indexed. For 'drag', pass to_col and to_row for the endpoint.",
+    "Send a mouse event (click, press, release, drag, or move) to an interactive session using the SGR mouse protocol. Use this to click buttons, position the cursor in text inputs, drag-select text, or hover over elements to trigger onMouseEnter / highlight UI. Row/col are 1-indexed. For 'drag' or a sweeping 'move', pass to_col and to_row for the endpoint.",
     sendMouseSchema.shape,
     { title: "Send Mouse", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async (input) => {
