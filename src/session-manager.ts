@@ -41,6 +41,8 @@ export class SessionManager {
       command: options.command,
       args: options.args ?? [],
       pid: terminal.pid,
+      cols: options.cols ?? 120,
+      rows: options.rows ?? 40,
       createdAt: new Date(),
       lastActivity: new Date(),
       isAlive: true,

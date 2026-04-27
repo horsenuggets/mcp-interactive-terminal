@@ -11,6 +11,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import type { TerminalWrapper } from "./types.js";
+import { createViewerSocket, type ViewerSocket } from "./viewer-socket.js";
 import { detectPromptPattern, endsWithPrompt } from "./utils/output-detector.js";
 import { stripAnsi } from "./utils/sanitizer.js";
 import { wrapCommand, isSandboxActive } from "./sandbox.js";
@@ -24,6 +25,8 @@ export interface TerminalOptions {
   env?: Record<string, string>;
   cols?: number;
   rows?: number;
+  /** Enable the viewer socket for this session. */
+  viewer?: boolean;
 }
 
 /**
@@ -63,11 +66,70 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   let outputBuffer = "";
   let lastOutputTime = Date.now();
 
+  // Viewer socket — created when explicitly requested or env var is set
+  const viewerEnabled = options.viewer === true || process.env.MCP_TERMINAL_VIEWER === "true";
+  const sessionId = Math.random().toString(36).slice(2, 10);
+  const viewerSocket = viewerEnabled ? createViewerSocket(sessionId) : null;
+
+  // Buffer raw PTY data so late-connecting viewers can replay
+  let rawDataBuffer = "";
+  const MAX_RAW_BUFFER = 256 * 1024; // 256KB
+
+  // Track the last cursor position where the app intended the cursor.
+  // Parse raw PTY data for cursor-show (\x1b[?25h) and CUP (\x1b[row;colH)
+  // sequences to capture the position the app set just before showing.
+  let lastVisibleCursorPos: { col: number; row: number } | null = null;
+
+  // Track cursor position from raw PTY data by parsing CUP sequences
+  // (\x1b[row;colH) that appear before cursor-show (\x1b[?25h).
+  // Also update on every write when the cursor is currently visible,
+  // since apps may reposition without re-sending show.
+  function trackCursorFromData(data: string): void {
+    // If data contains cursor-show, capture position before it
+    if (data.includes("\x1b[?25h")) {
+      const showIdx = data.lastIndexOf("\x1b[?25h");
+      const beforeShow = data.slice(0, showIdx);
+      const cupRegex = /\x1b\[(\d+);(\d+)H/g;
+      let lastMatch: RegExpExecArray | null = null;
+      let match: RegExpExecArray | null;
+      while ((match = cupRegex.exec(beforeShow)) !== null) {
+        lastMatch = match;
+      }
+      if (lastMatch) {
+        lastVisibleCursorPos = {
+          col: parseInt(lastMatch[1], 10),
+          row: parseInt(lastMatch[2], 10),
+        };
+      }
+    }
+  }
+
   ptyProcess.onData((data: string) => {
-    xterm.write(data);
+    trackCursorFromData(data);
+    xterm.write(data, () => {
+      // After xterm processes data, if cursor is currently visible,
+      // update the last-visible position from xterm's buffer
+      const hidden = (xterm as any)._core?.coreService?.isCursorHidden ?? false;
+      if (!hidden) {
+        const buf = xterm.buffer.active;
+        lastVisibleCursorPos = { col: buf.cursorX + 1, row: buf.baseY + buf.cursorY + 1 };
+      }
+    });
     outputBuffer += data;
     lastOutputTime = Date.now();
+
+    if (viewerSocket) {
+      viewerSocket.write(data);
+      rawDataBuffer += data;
+      if (rawDataBuffer.length > MAX_RAW_BUFFER) {
+        rawDataBuffer = rawDataBuffer.slice(-MAX_RAW_BUFFER);
+      }
+    }
   });
+
+  if (viewerSocket) {
+    viewerSocket.setReplayBuffer(() => rawDataBuffer);
+  }
 
   ptyProcess.onExit(() => {
     isAlive = false;
@@ -87,7 +149,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
       ptyProcess.write(data);
     },
 
-    readScreen(fullScreen = false, rawAnsi = false): string {
+    readScreen(fullScreen = false, rawAnsi = false): { text: string; topOffset: number } {
       const buffer = xterm.buffer.active;
       const lines: string[] = [];
 
@@ -170,11 +232,34 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
       }
 
       while (lines.length > 0 && lines[lines.length - 1].replace(/\x1b\[[0-9;]*m/g, "").trim() === "") lines.pop();
-      return lines.join("\n");
+      // Count and strip leading blank rows, report offset so callers can
+      // compute real screen coordinates for mouse events.
+      let topOffset = 0;
+      while (lines.length > 0 && lines[0]!.replace(/\x1b\[[0-9;]*m/g, "").trim() === "") {
+        lines.shift();
+        topOffset++;
+      }
+      return { text: lines.join("\n"), topOffset };
     },
 
+    getCursorPosition(): { col: number; row: number } | null {
+      const buf = xterm.buffer.active;
+      // xterm cursor is 0-indexed; return 1-indexed to match SGR mouse protocol
+      return { col: buf.cursorX + 1, row: buf.baseY + buf.cursorY + 1 };
+    },
+
+    isCursorHidden(): boolean {
+      return (xterm as any)._core?.coreService?.isCursorHidden ?? false;
+    },
+
+    getLastVisibleCursorPosition(): { col: number; row: number } | null {
+      return lastVisibleCursorPos;
+    },
+
+    viewerSocketPath: viewerSocket?.socketPath ?? null,
+
     async waitForOutput(timeoutMs: number) {
-      return waitForSettled(() => isAlive, () => outputBuffer, () => lastOutputTime, () => wrapper.readScreen(), timeoutMs, wrapper);
+      return waitForSettled(() => isAlive, () => outputBuffer, () => lastOutputTime, () => wrapper.readScreen().text, timeoutMs, wrapper);
     },
 
     resize(newCols: number, newRows: number) {
@@ -188,13 +273,14 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
 
     dispose() {
       if (isAlive) { ptyProcess.kill(); isAlive = false; }
+      viewerSocket?.close();
       xterm.dispose();
     },
   };
 
   // Wait for startup output to detect prompt
   await new Promise((r) => setTimeout(r, 1000));
-  const startupScreen = wrapper.readScreen();
+  const startupScreen = wrapper.readScreen().text;
   promptPattern = detectPromptPattern(startupScreen);
   wrapper.promptPattern = promptPattern;
   return wrapper;
@@ -351,13 +437,28 @@ export async function createPipeTerminal(options: TerminalOptions): Promise<Term
         proc.stdin!.write(data);
       },
 
-      readScreen(fullScreen = false, _rawAnsi = false): string {
+      readScreen(fullScreen = false, rawAnsi = false): { text: string; topOffset: number } {
+        const clean = rawAnsi ? (s: string) => s : stripAnsi;
         if (fullScreen) {
-          return stripAnsi(outputLines.join("\n"));
+          return { text: clean(outputLines.join("\n")), topOffset: 0 };
         }
         // Return only output received since the last write()
-        return stripAnsi(newOutputBuffer);
+        return { text: clean(newOutputBuffer), topOffset: 0 };
       },
+
+      getCursorPosition(): { col: number; row: number } | null {
+        return null; // Not available in pipe mode
+      },
+
+      isCursorHidden(): boolean {
+        return false; // Not available in pipe mode
+      },
+
+      getLastVisibleCursorPosition(): { col: number; row: number } | null {
+        return null; // Not available in pipe mode
+      },
+
+      viewerSocketPath: null,
 
       async waitForOutput(timeoutMs: number) {
         const startGen = outputGeneration;
@@ -365,7 +466,7 @@ export async function createPipeTerminal(options: TerminalOptions): Promise<Term
           () => isAlive,
           () => String(outputGeneration),
           () => lastOutputTime,
-          () => wrapper.readScreen(),
+          () => wrapper.readScreen().text,
           timeoutMs,
           wrapper,
         );
@@ -393,7 +494,7 @@ export async function createPipeTerminal(options: TerminalOptions): Promise<Term
 
     // Wait for startup output to detect prompt
     setTimeout(() => {
-      const startupScreen = wrapper.readScreen();
+      const startupScreen = wrapper.readScreen().text;
       promptPattern = detectPromptPattern(startupScreen);
       wrapper.promptPattern = promptPattern;
       resolve(wrapper);

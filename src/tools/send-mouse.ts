@@ -219,7 +219,7 @@ export async function handleSendMouse(
     setTimeout(resolve, args.wait_ms ?? MOUSE_WAIT_MS),
   );
 
-  let output = session.terminal.readScreen();
+  let output = session.terminal.readScreen().text;
   output = sanitize(output, { maxChars: config.maxOutput });
 
   if (config.redactSecrets) {

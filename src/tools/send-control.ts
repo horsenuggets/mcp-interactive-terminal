@@ -104,7 +104,7 @@ export async function handleSendControl(
   // Brief wait for response
   await new Promise((resolve) => setTimeout(resolve, CONTROL_WAIT_MS));
 
-  let output = session.terminal.readScreen();
+  let output = session.terminal.readScreen().text;
   output = sanitize(output, { maxChars: config.maxOutput });
 
   if (config.redactSecrets) {

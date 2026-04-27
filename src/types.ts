@@ -52,6 +52,8 @@ export interface Session {
   command: string;
   args: string[];
   pid: number;
+  cols: number;
+  rows: number;
   createdAt: Date;
   lastActivity: Date;
   isAlive: boolean;
@@ -79,7 +81,16 @@ export interface TerminalWrapper {
   /** The character that means "execute/enter" — \r for PTY, \n for pipe */
   get enterKey(): string;
   write(data: string): void;
-  readScreen(fullScreen?: boolean, rawAnsi?: boolean): string;
+  readScreen(fullScreen?: boolean, rawAnsi?: boolean): { text: string; topOffset: number };
+  /** Get the cursor position as {col, row} (1-indexed). Returns null in pipe mode. */
+  getCursorPosition(): { col: number; row: number } | null;
+  /** Check if the cursor is hidden via DECTCEM (\x1b[?25l). Only available in PTY mode. */
+  isCursorHidden(): boolean;
+  /** Get the last cursor position where DECTCEM was visible. Captures the
+   *  logical cursor even for apps (like Ink) that rapidly show/hide it. */
+  getLastVisibleCursorPosition(): { col: number; row: number } | null;
+  /** Path to the viewer Unix socket, if active. */
+  viewerSocketPath: string | null;
   waitForOutput(timeoutMs: number): Promise<{ output: string; isComplete: boolean }>;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
@@ -126,6 +137,12 @@ export interface ReadOutputInput {
 export interface ReadOutputOutput {
   output: string;
   is_alive: boolean;
+  cursor?: { col: number; row: number; visible: boolean };
+  /** Number of blank rows trimmed from the top of the screen output. Add this
+   *  to visual row numbers to get real screen coordinates for mouse events. */
+  top_offset?: number;
+  /** Path to the viewer Unix socket for this session (PTY mode only). */
+  viewer_socket?: string;
 }
 
 export interface CloseSessionInput {
@@ -204,6 +221,9 @@ export const CONTROL_KEYS: Record<string, string> = {
   "pagedown": "\x1b[6~",
   "insert": "\x1b[2~",
   "shift+tab": "\x1b[Z",
+  "shift+enter": "\x1b\r",
+  "alt+enter": "\x1b\r",
+  "option+enter": "\x1b\r",
   // SGR mouse wheel events (DEC 1006 protocol). These simulate mouse wheel
   // scrolling when the terminal app has enabled SGR mouse tracking. The
   // position (col 1, row 1) doesn't matter for scroll — apps only care

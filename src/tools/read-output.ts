@@ -21,15 +21,22 @@ export async function handleReadOutput(
 ): Promise<ReadOutputOutput> {
   const session = sessionManager.getSession(args.session_id);
 
-  let output = session.terminal.readScreen(args.full_screen, args.raw_ansi);
-  output = sanitize(output, { maxChars: config.maxOutput });
+  const screen = session.terminal.readScreen(args.full_screen, args.raw_ansi);
+  let output = sanitize(screen.text, { maxChars: config.maxOutput, keepAnsi: args.raw_ansi });
 
   if (config.redactSecrets) {
     output = redactSecrets(output);
   }
 
+  const cursor = session.terminal.getCursorPosition();
+  const cursorHidden = session.terminal.isCursorHidden();
+  const lastVisibleCursor = session.terminal.getLastVisibleCursorPosition();
   return {
     output,
     is_alive: session.terminal.isAlive,
+    ...(cursor && { cursor: { ...cursor, visible: !cursorHidden } }),
+    ...(lastVisibleCursor && { last_visible_cursor: lastVisibleCursor }),
+    ...(screen.topOffset > 0 && { top_offset: screen.topOffset }),
+    ...(session.terminal.viewerSocketPath && { viewer_socket: session.terminal.viewerSocketPath }),
   };
 }

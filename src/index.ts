@@ -26,6 +26,8 @@ import {
   confirmDangerousCommandSchema,
   handleConfirmDangerousCommand,
 } from "./tools/confirm-dangerous-command.js";
+import { viewSessionSchema, handleViewSession } from "./tools/view-session.js";
+import { screenshotSessionSchema, handleScreenshotSession } from "./tools/screenshot-session.js";
 import { initSandbox, resetSandbox } from "./sandbox.js";
 import { configureAudit, audit } from "./utils/audit-logger.js";
 
@@ -49,10 +51,10 @@ function createServer(cfg?: ServerConfig) {
     "Spawn an interactive terminal session (REPL, shell, database client, SSH, etc.). Returns a session_id for subsequent commands.",
     createSessionSchema.shape,
     { title: "Create Session", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    async ({ command, args, name, cwd, env, cols, rows }) => {
+    async ({ command, args, name, cwd, env, cols, rows, viewer }) => {
       try {
         const result = await handleCreateSession(
-          { command, args, name, cwd, env, cols, rows },
+          { command, args, name, cwd, env, cols, rows, viewer },
           sessionManager,
           config,
         );
@@ -68,13 +70,13 @@ function createServer(cfg?: ServerConfig) {
 
   server.tool(
     "send_command",
-    "Send a command/input to an interactive session and wait for output. Appends a newline by default (pass newline=false to type raw text without submitting — useful for filling a TUI input before mouse clicks or drags). Returns clean text output (no ANSI codes). If a dangerous command is detected, you must use confirm_dangerous_command first.",
+    "Send a command/input to an interactive session and wait for output. Appends a newline by default (pass newline=false to type raw text without submitting — useful for filling a TUI input before mouse clicks or drags). Returns clean text output by default (no ANSI codes); pass raw_ansi=true to preserve color/style codes. If a dangerous command is detected, you must use confirm_dangerous_command first.",
     sendCommandSchema.shape,
     { title: "Send Command", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    async ({ session_id, input, newline, timeout_ms, max_output_chars }) => {
+    async ({ session_id, input, newline, timeout_ms, max_output_chars, raw_ansi }) => {
       try {
         const result = await handleSendCommand(
-          { session_id, input, newline, timeout_ms, max_output_chars },
+          { session_id, input, newline, timeout_ms, max_output_chars, raw_ansi },
           sessionManager,
           config,
         );
@@ -202,6 +204,49 @@ function createServer(cfg?: ServerConfig) {
           config,
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "view_session",
+    "Open a visual terminal viewer window for a session. Shows real-time terminal output with cursor position, colors, and styles in a native desktop window. Pass foreground=true to bring the window to the front and capture focus. Requires the terminal-viewer binary to be installed.",
+    viewSessionSchema.shape,
+    { title: "View Session", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async ({ session_id, foreground }) => {
+      try {
+        const result = await handleViewSession({ session_id, foreground }, sessionManager);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "screenshot_session",
+    "Capture the Terminal Viewer window as a PNG image. Returns the image as base64-encoded PNG data. The viewer must be running for this session (create with viewer: true). On macOS, briefly brings the viewer to front for the capture.",
+    screenshotSessionSchema.shape,
+    { title: "Screenshot Session", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async ({ session_id }) => {
+      try {
+        const result = await handleScreenshotSession({ session_id }, sessionManager);
+        if ("error" in result) {
+          return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
+        }
+        return {
+          content: [
+            { type: "image", data: result.image_data, mimeType: "image/png" },
+          ],
+        };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],

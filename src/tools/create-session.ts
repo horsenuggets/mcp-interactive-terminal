@@ -11,6 +11,7 @@ export const createSessionSchema = z.object({
   env: z.record(z.string()).optional().describe("Additional environment variables"),
   cols: z.number().min(40).max(300).optional().default(120).describe("Terminal width in columns"),
   rows: z.number().min(10).max(100).optional().default(40).describe("Terminal height in rows"),
+  viewer: z.boolean().optional().default(false).describe("Enable visual viewer socket for this session"),
 });
 
 export type CreateSessionArgs = z.infer<typeof createSessionSchema>;
@@ -32,6 +33,7 @@ export async function handleCreateSession(
     env: args.env,
     cols: args.cols,
     rows: args.rows,
+    viewer: args.viewer,
   });
 
   audit("session_create", session.id, {
