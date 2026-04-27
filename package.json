@@ -59,11 +59,12 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@xterm/headless": "^5.5.0",
+    "canvas": "^3.2.3",
     "zod": "^3.24.0"
   },
   "optionalDependencies": {
-    "node-pty": "^1.0.0",
-    "@anthropic-ai/sandbox-runtime": "^0.0.37"
+    "@anthropic-ai/sandbox-runtime": "^0.0.37",
+    "node-pty": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
