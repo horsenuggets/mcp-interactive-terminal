@@ -43,6 +43,8 @@ export const sendCommandSchema = z.object({
     .describe("Max time to wait for output (ms)"),
   max_output_chars: z.number().min(100).optional()
     .describe("Override max output characters for this call"),
+  raw_ansi: z.boolean().optional().default(false)
+    .describe("Include ANSI color/style escape codes in the output (useful for comparing terminal rendering)"),
 });
 
 export type SendCommandArgs = z.infer<typeof sendCommandSchema>;
@@ -103,11 +105,15 @@ export async function handleSendCommand(
   // Wait for output
   const { output, isComplete } = await session.terminal.waitForOutput(args.timeout_ms);
 
+  // If raw_ansi requested, re-read screen with ANSI codes intact
+  const rawOutput = args.raw_ansi ? session.terminal.readScreen(false, true).text : output;
+
   // Sanitize
   const maxChars = args.max_output_chars ?? config.maxOutput;
-  let cleanOutput = sanitize(output, {
+  let cleanOutput = sanitize(rawOutput, {
     command: args.input,
     maxChars,
+    keepAnsi: args.raw_ansi,
   });
 
   // Optional secret redaction

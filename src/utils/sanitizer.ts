@@ -75,9 +75,10 @@ export function sanitize(
   options: {
     command?: string;
     maxChars?: number;
+    keepAnsi?: boolean;
   } = {}
 ): string {
-  let result = stripAnsi(output);
+  let result = options.keepAnsi ? output : stripAnsi(output);
   if (options.command) {
     result = stripCommandEcho(result, options.command);
   }
