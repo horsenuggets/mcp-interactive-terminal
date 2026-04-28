@@ -14,6 +14,7 @@ export type AuditEvent =
   | "session_create"
   | "session_close"
   | "session_idle_timeout"
+  | "session_ttl_timeout"
   | "command"
   | "command_blocked_danger"
   | "command_confirmed_danger"

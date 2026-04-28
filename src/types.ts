@@ -56,6 +56,7 @@ export interface Session {
   rows: number;
   createdAt: Date;
   lastActivity: Date;
+  deadlineMs: number | null;
   isAlive: boolean;
   terminal: TerminalWrapper;
   pendingDangerousCommands: Set<string>;

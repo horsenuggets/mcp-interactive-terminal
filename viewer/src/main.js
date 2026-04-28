@@ -141,6 +141,20 @@ window.addEventListener("focus", () => {
 // Synthetic cursor element — always solid, positioned from xterm.js buffer
 const cursorEl = document.getElementById("synthetic-cursor");
 
+// Red outline indicator around the cursor cell — makes it obvious in screenshots
+const cursorOutline = document.createElement("div");
+cursorOutline.id = "cursor-outline";
+Object.assign(cursorOutline.style, {
+  position: "absolute",
+  border: "2px solid #ff0000",
+  borderRadius: "1px",
+  pointerEvents: "none",
+  zIndex: "11",
+  display: "none",
+  boxSizing: "border-box",
+});
+document.body.appendChild(cursorOutline);
+
 // Track the last cursor position where DECTCEM was visible.
 // Apps like Ink rapidly show/hide — we capture the position at each show.
 let lastVisiblePos = null;
@@ -158,6 +172,7 @@ function updateSyntheticCursor() {
   const pos = lastVisiblePos || (isVisible ? { x: buf.cursorX, y: buf.cursorY } : null);
   if (!pos) {
     cursorEl.style.display = "none";
+    cursorOutline.style.display = "none";
     return;
   }
   try {
@@ -170,8 +185,16 @@ function updateSyntheticCursor() {
     cursorEl.style.top = y + "px";
     cursorEl.style.height = cellH + "px";
     cursorEl.style.display = "block";
+
+    // Position the red outline around the full cursor cell
+    cursorOutline.style.left = (x - 2) + "px";
+    cursorOutline.style.top = (y - 1) + "px";
+    cursorOutline.style.width = (cellW + 4) + "px";
+    cursorOutline.style.height = (cellH + 2) + "px";
+    cursorOutline.style.display = "block";
   } catch {
     cursorEl.style.display = "none";
+    cursorOutline.style.display = "none";
   }
 }
 

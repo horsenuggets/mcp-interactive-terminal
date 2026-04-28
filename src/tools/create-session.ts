@@ -11,6 +11,7 @@ export const createSessionSchema = z.object({
   env: z.record(z.string()).optional().describe("Additional environment variables"),
   cols: z.number().min(40).max(300).optional().default(120).describe("Terminal width in columns"),
   rows: z.number().min(10).max(100).optional().default(40).describe("Terminal height in rows"),
+  timeout_seconds: z.number().min(1).max(21600).optional().default(300).describe("Session auto-timeout in seconds. The session process will be killed (SIGKILL) when this expires. Uses wall-clock time so it survives sleep/wake cycles. Default: 300 (5 minutes). Maximum: 21600 (6 hours)."),
   viewer: z.boolean().optional().default(false).describe("Enable visual viewer socket for this session"),
 });
 
@@ -33,6 +34,7 @@ export async function handleCreateSession(
     env: args.env,
     cols: args.cols,
     rows: args.rows,
+    timeoutSeconds: args.timeout_seconds,
     viewer: args.viewer,
   });
 

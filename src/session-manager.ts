@@ -12,6 +12,7 @@ import { audit } from "./utils/audit-logger.js";
 export class SessionManager {
   private sessions = new Map<string, Session>();
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private ttlPollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private config: ServerConfig) {}
 
@@ -19,7 +20,7 @@ export class SessionManager {
     return this.sessions.size;
   }
 
-  async createSession(options: TerminalOptions & { name?: string }): Promise<Session> {
+  async createSession(options: TerminalOptions & { name?: string; timeoutSeconds?: number }): Promise<Session> {
     // Check limits
     if (this.sessions.size >= this.config.maxSessions) {
       throw new Error(
@@ -35,6 +36,7 @@ export class SessionManager {
 
     const terminal = await createTerminal(options);
     const id = randomUUID().slice(0, 8);
+    const ttlSeconds = options.timeoutSeconds ?? 300;
     const session: Session = {
       id,
       name: options.name ?? `${options.command}-${id}`,
@@ -45,12 +47,16 @@ export class SessionManager {
       rows: options.rows ?? 40,
       createdAt: new Date(),
       lastActivity: new Date(),
+      deadlineMs: Date.now() + ttlSeconds * 1000,
       isAlive: true,
       terminal,
       pendingDangerousCommands: new Set(),
     };
 
     this.sessions.set(id, session);
+
+    // Start TTL polling if not already running
+    this.ensureTtlPoll();
 
     // Set up idle timeout if configured
     if (this.config.idleTimeout > 0) {
@@ -179,5 +185,34 @@ export class SessionManager {
       clearTimeout(timer);
       this.idleTimers.delete(id);
     }
+  }
+
+  /**
+   * Start a 30-second polling interval that checks session deadlines using
+   * wall-clock comparison. This survives sleep/wake cycles because we compare
+   * Date.now() against the absolute deadline timestamp each tick rather than
+   * relying on setTimeout accuracy.
+   */
+  private ensureTtlPoll(): void {
+    if (this.ttlPollTimer) return;
+    this.ttlPollTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [id, session] of this.sessions) {
+        if (session.deadlineMs !== null && now >= session.deadlineMs) {
+          audit("session_ttl_timeout", id, { name: session.name });
+          try {
+            // SIGKILL the process — the session has exceeded its TTL
+            this.closeSession(id, "SIGKILL");
+          } catch {
+            // Ignore errors during cleanup
+          }
+        }
+      }
+      // Stop polling when no sessions remain
+      if (this.sessions.size === 0 && this.ttlPollTimer) {
+        clearInterval(this.ttlPollTimer);
+        this.ttlPollTimer = null;
+      }
+    }, 30_000);
   }
 }
