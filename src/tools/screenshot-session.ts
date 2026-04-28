@@ -152,17 +152,36 @@ export async function handleScreenshotSession(
     }
   }
 
-  // Draw synthetic cursor bar.
-  // Priority: current cursor if visible, then last-visible-cursor for
-  // apps like Ink that rapidly show/hide. Both are 1-indexed.
-  const visibleCursor = !terminal.isCursorHidden() ? cursor
-    : terminal.getLastVisibleCursorPosition();
+  // Draw synthetic cursor bar with red outline indicator.
+  // Only draw when cursor is visible. The last-visible-cursor fallback
+  // is used by the viewer for Ink's rapid show/hide during rendering,
+  // but screenshots should respect the current visibility state —
+  // a deliberately hidden cursor (click-to-blur, selection outside
+  // input box) should not appear in the screenshot.
+  const cursorHidden = terminal.isCursorHidden();
+  const visibleCursor = !cursorHidden ? cursor : null;
   if (visibleCursor) {
     const cursorCol = visibleCursor.col - 1;
     const cursorRow = visibleCursor.row - 1 - rawScreen.topOffset;
     if (cursorRow >= 0 && cursorRow < rows && cursorCol >= 0 && cursorCol <= cols) {
       const cx = padding.x + cursorCol * cellWidth;
       const cy = padding.y + cursorRow * cellHeight;
+      // Red outline centered around cursor bar (barW wide) with uniform
+      // gap between bar and inner border edge. Sharp corners, slightly
+      // pastel red at 75% opacity.
+      const barW = scale * 2; // cursor bar width in canvas pixels
+      const gap = 2 * scale;  // space between bar and inner border edge
+      const bw = scale;       // border width
+      const m = gap + bw;     // total offset from bar edge
+      ctx.strokeStyle = "rgba(255, 70, 70, 0.5)";
+      ctx.lineWidth = bw;
+      ctx.strokeRect(
+        cx - m + bw / 2,
+        cy - m + bw / 2,
+        barW + m * 2 - bw,
+        cellHeight + m * 2 - bw,
+      );
+      // Cursor bar
       ctx.fillStyle = "#f0f0f0";
       ctx.fillRect(cx, cy, scale * 2, cellHeight);
     }

@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { listen, emit } from "@tauri-apps/api/event";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+const { listen, emit } = window.__TAURI__.event;
+const { getCurrentWindow, LogicalSize } = window.__TAURI__.window;
 
 // Default terminal — will be reconfigured when terminal-config arrives
 const term = new Terminal({
@@ -146,8 +146,8 @@ const cursorOutline = document.createElement("div");
 cursorOutline.id = "cursor-outline";
 Object.assign(cursorOutline.style, {
   position: "absolute",
-  border: "2px solid #ff0000",
-  borderRadius: "1px",
+  border: "2px solid rgba(255, 70, 70, 0.5)",
+  borderRadius: "0",
   pointerEvents: "none",
   zIndex: "11",
   display: "none",
@@ -168,8 +168,15 @@ function updateSyntheticCursor() {
     lastVisiblePos = { x: buf.cursorX, y: buf.cursorY };
   }
 
-  // Use last visible position, or current position if cursor is visible
-  const pos = lastVisiblePos || (isVisible ? { x: buf.cursorX, y: buf.cursorY } : null);
+  // Hide cursor + outline when DECTCEM is off (click-to-blur, selection
+  // outside input box, etc). Track lastVisiblePos so the cursor returns
+  // to the right spot when re-shown.
+  if (!isVisible) {
+    cursorEl.style.display = "none";
+    cursorOutline.style.display = "none";
+    return;
+  }
+  const pos = { x: buf.cursorX, y: buf.cursorY };
   if (!pos) {
     cursorEl.style.display = "none";
     cursorOutline.style.display = "none";
@@ -186,11 +193,17 @@ function updateSyntheticCursor() {
     cursorEl.style.height = cellH + "px";
     cursorEl.style.display = "block";
 
-    // Position the red outline around the full cursor cell
-    cursorOutline.style.left = (x - 2) + "px";
-    cursorOutline.style.top = (y - 1) + "px";
-    cursorOutline.style.width = (cellW + 4) + "px";
-    cursorOutline.style.height = (cellH + 2) + "px";
+    // Position the red outline centered around the cursor bar (2px wide).
+    // Uniform gap of 2px between bar and inner border edge, border is 2px,
+    // so total offset from bar edge = gap + border = 4px each side.
+    const barW = 2; // synthetic cursor width
+    const gap = 2; // space between bar and inner border edge
+    const bw = 2;  // border width
+    const m = gap + bw;
+    cursorOutline.style.left = (x - m) + "px";
+    cursorOutline.style.top = (y - m) + "px";
+    cursorOutline.style.width = (barW + m * 2) + "px";
+    cursorOutline.style.height = (cellH + m * 2) + "px";
     cursorOutline.style.display = "block";
   } catch {
     cursorEl.style.display = "none";
