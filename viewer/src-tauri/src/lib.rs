@@ -20,6 +20,7 @@ async fn stream_pty_data(app: AppHandle, socket_path: String) {
         match stream.read(&mut buf).await {
             Ok(0) => {
                 let _ = app.emit("pty-closed", ());
+                app.exit(0);
                 break;
             }
             Ok(n) => {
@@ -28,6 +29,7 @@ async fn stream_pty_data(app: AppHandle, socket_path: String) {
             }
             Err(e) => {
                 let _ = app.emit("pty-error", format!("Read error: {}", e));
+                app.exit(1);
                 break;
             }
         }
