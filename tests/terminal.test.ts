@@ -38,7 +38,7 @@ describe("Terminal", () => {
     terminal.write("echo screen_test\n");
     await new Promise((r) => setTimeout(r, 1000));
 
-    const screen = terminal.readScreen();
+    const { text: screen } = terminal.readScreen();
     expect(screen).toContain("screen_test");
   }, 10000);
 
