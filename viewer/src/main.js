@@ -60,15 +60,15 @@ term.open(container);
     if (!c) continue;
     const m = c.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
     if (!m) continue;
-    const r = parseInt(m[1], 16) * 0.5;
-    const g = parseInt(m[2], 16) * 0.5;
-    const b = parseInt(m[3], 16) * 0.5;
+    const r = parseInt(m[1], 16) * 0.6;
+    const g = parseInt(m[2], 16) * 0.6;
+    const b = parseInt(m[3], 16) * 0.6;
     css += `.xterm .xterm-fg-${i}.xterm-dim{color:#${hex(r)}${hex(g)}${hex(b)} !important}\n`;
   }
   const fg = theme.foreground || "#f0f0f0";
   const fgm = fg.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
   if (fgm) {
-    css += `.xterm .xterm-fg-257.xterm-dim{color:#${hex(parseInt(fgm[1],16)*0.5)}${hex(parseInt(fgm[2],16)*0.5)}${hex(parseInt(fgm[3],16)*0.5)} !important}\n`;
+    css += `.xterm .xterm-fg-257.xterm-dim{color:#${hex(parseInt(fgm[1],16)*0.6)}${hex(parseInt(fgm[2],16)*0.6)}${hex(parseInt(fgm[3],16)*0.6)} !important}\n`;
   }
   if (css) {
     const s = document.createElement("style");
