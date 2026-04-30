@@ -36,7 +36,7 @@ describe("Pipe Terminal", () => {
     terminal.write("echo screen_pipe_test\n");
     await new Promise((r) => setTimeout(r, 1000));
 
-    const screen = terminal.readScreen();
+    const { text: screen } = terminal.readScreen();
     expect(screen).toContain("screen_pipe_test");
   }, 10000);
 
@@ -48,7 +48,7 @@ describe("Pipe Terminal", () => {
     terminal.write("echo line_two\n");
     await new Promise((r) => setTimeout(r, 500));
 
-    const fullScreen = terminal.readScreen(true);
+    const { text: fullScreen } = terminal.readScreen(true);
     expect(fullScreen).toContain("line_one");
     expect(fullScreen).toContain("line_two");
   }, 10000);
@@ -58,13 +58,13 @@ describe("Pipe Terminal", () => {
 
     terminal.write("echo first_cmd\n");
     await new Promise((r) => setTimeout(r, 500));
-    const out1 = terminal.readScreen();
+    const { text: out1 } = terminal.readScreen();
     expect(out1).toContain("first_cmd");
 
     // Second command: readScreen should only show new output
     terminal.write("echo second_cmd\n");
     await new Promise((r) => setTimeout(r, 500));
-    const out2 = terminal.readScreen();
+    const { text: out2 } = terminal.readScreen();
     expect(out2).toContain("second_cmd");
   }, 10000);
 
@@ -92,7 +92,7 @@ describe("Pipe Terminal", () => {
     terminal.write("printf '\\033[31mred_text\\033[0m\\n'\n");
     await new Promise((r) => setTimeout(r, 500));
 
-    const screen = terminal.readScreen();
+    const { text: screen } = terminal.readScreen();
     expect(screen).toContain("red_text");
     expect(screen).not.toContain("\x1b[31m");
     expect(screen).not.toContain("\x1b[0m");
