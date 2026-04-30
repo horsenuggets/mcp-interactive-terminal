@@ -72,7 +72,7 @@ resource "github_repository_ruleset" "main" {
         for_each = local.required_checks
         content {
           context        = required_check.value
-          integration_id = 0
+          integration_id = 15368
         }
       }
     }
