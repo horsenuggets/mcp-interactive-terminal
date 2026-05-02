@@ -1,0 +1,15 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #292c33; }
+#terminal { width: 100%; height: 100%; padding: 8px 10px; }
+
+/* Hide native xterm.js cursor — we render our own synthetic cursor */
+.xterm-cursor-layer { display: none !important; }
+
+#synthetic-cursor {
+  position: absolute;
+  width: 2px;
+  background: #f0f0f0;
+  pointer-events: none;
+  z-index: 10;
+  display: none;
+}

@@ -1,34 +1,29 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import sharedTheme from "../../src/theme.json";
 const { listen, emit } = window.__TAURI__.event;
 const { getCurrentWindow, LogicalSize } = window.__TAURI__.window;
 
-// Default terminal — will be reconfigured when terminal-config arrives
+// Build the xterm theme from the shared theme.json so the viewer and
+// the PNG screenshot tool render with identical colors (matching
+// Ghostty defaults).
+const ANSI_NAMES = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow",
+  "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+];
+const xtermTheme = {
+  background: sharedTheme.background,
+  foreground: sharedTheme.foreground,
+  cursor: sharedTheme.cursor,
+  selectionBackground: sharedTheme.selectionBackground,
+};
+ANSI_NAMES.forEach((name, i) => { xtermTheme[name] = sharedTheme.ansi16[i]; });
+
 const term = new Terminal({
   fontFamily: "Menlo, monospace",
   fontSize: 12,
-  theme: {
-    background: "#292c33",
-    foreground: "#ffffff",
-    cursor: "#ffffff",
-    selectionBackground: "#264f78",
-    black: "#1d1f21",
-    red: "#bf6b69",
-    green: "#b7bd73",
-    yellow: "#e9c880",
-    blue: "#88a1bb",
-    magenta: "#ad95b8",
-    cyan: "#95bdb7",
-    white: "#c5c8c6",
-    brightBlack: "#666666",
-    brightRed: "#c55757",
-    brightGreen: "#bcc95f",
-    brightYellow: "#e1c65e",
-    brightBlue: "#83a5d6",
-    brightMagenta: "#bc99d4",
-    brightCyan: "#83beb1",
-    brightWhite: "#eaeaea",
-  },
+  theme: xtermTheme,
   drawBoldTextInBrightColors: false,
   cursorBlink: false,
   cursorStyle: "bar",

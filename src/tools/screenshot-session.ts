@@ -1,5 +1,18 @@
+import { createRequire } from "node:module";
 import { z } from "zod";
 import type { SessionManager } from "../session-manager.js";
+
+const require = createRequire(import.meta.url);
+// Loaded via createRequire so it works under "module": "Node16" without
+// needing import attributes. Keeps the same source of truth as the
+// Tauri viewer's xterm theme.
+const theme: {
+  background: string;
+  foreground: string;
+  cursor: string;
+  selectionBackground: string;
+  ansi16: string[];
+} = require("../theme.json");
 
 export const screenshotSessionSchema = z.object({
   session_id: z.string().describe("The session ID to screenshot"),
@@ -7,25 +20,10 @@ export const screenshotSessionSchema = z.object({
 
 export type ScreenshotSessionArgs = z.infer<typeof screenshotSessionSchema>;
 
-// ANSI 256-color palette (first 16 colors matching our viewer theme)
-const PALETTE: string[] = [
-  "#7f7f7f", // 0 black (visible gray)
-  "#ff5555", // 1 red
-  "#50fa7b", // 2 green
-  "#f1fa8c", // 3 yellow
-  "#6272a4", // 4 blue
-  "#ff79c6", // 5 magenta
-  "#8be9fd", // 6 cyan
-  "#f8f8f2", // 7 white
-  "#6272a4", // 8 bright black
-  "#ff6e6e", // 9 bright red
-  "#69ff94", // 10 bright green
-  "#ffffa5", // 11 bright yellow
-  "#d6acff", // 12 bright blue
-  "#ff92df", // 13 bright magenta
-  "#a4ffff", // 14 bright cyan
-  "#ffffff", // 15 bright white
-];
+// First 16 colors come from the shared viewer theme so the screenshot
+// PNG matches what the viewer (and Ghostty) render. Higher entries
+// (16-255) follow the standard xterm 256-color cube.
+const PALETTE: string[] = [...theme.ansi16];
 
 // Fill 16-255 with standard 256-color palette
 for (let i = 16; i < 232; i++) {
@@ -98,32 +96,29 @@ const EMOJI_PRESENTATION_2600_27BF = new Set<number>([
   0x27bf,
 ]);
 
-// Try to register Apple Color Emoji once. Cairo can't render its color
-// bitmap tables but it does pick up the monochrome outlines, which is far
-// better than Menlo's tofu boxes. Best-effort — silently ignore failures.
+// Register a bundled COLR/CPAL color emoji font (Twemoji Mozilla, OFL).
+// skia-canvas renders COLR/CPAL (Twemoji) and sbix (Apple Color Emoji)
+// in full color, so emoji glyphs come out colored — not the monochrome
+// fallback that node-canvas/Cairo produces.
 let emojiFontRegistered = false;
-function registerEmojiFontOnce(canvasMod: any): void {
+function registerEmojiFontOnce(skiaMod: any): void {
   if (emojiFontRegistered) return;
   emojiFontRegistered = true;
-  const candidates = [
-    "/System/Library/Fonts/Apple Color Emoji.ttc",
-    "/Library/Fonts/Apple Color Emoji.ttc",
-    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
-  ];
-  for (const path of candidates) {
-    try {
-      canvasMod.registerFont(path, { family: "EmojiFallback" });
-      return;
-    } catch {
-      // try next
-    }
+  // The bundled font ships at dist/assets/TwemojiMozilla.ttf (copied
+  // there by the build script). Resolve via import.meta.url so the
+  // lookup works under npm install, npx, and global installs alike.
+  try {
+    const url = new URL("../assets/TwemojiMozilla.ttf", import.meta.url);
+    skiaMod.FontLibrary.use("EmojiFallback", [url.pathname]);
+  } catch {
+    // ignore — emoji will fall back to the system fonts below
   }
 }
 
 /**
- * Render the terminal buffer to a PNG image using node-canvas.
- * Reads cell data from xterm-headless and draws it with proper colors.
+ * Render the terminal buffer to a PNG image using skia-canvas.
+ * Reads cell data from xterm-headless and draws it with proper colors,
+ * including COLR/CPAL and sbix color emoji glyphs.
  */
 export async function handleScreenshotSession(
   args: ScreenshotSessionArgs,
@@ -136,16 +131,18 @@ export async function handleScreenshotSession(
     return { error: "Screenshot only available in PTY mode" };
   }
 
-  // Dynamic import canvas (it's a native module)
-  let createCanvas: (w: number, h: number) => any;
-  let canvasMod: any;
+  // Dynamic import skia-canvas (native module). Skia is used here
+  // instead of node-canvas because it renders color emoji fonts
+  // (Twemoji COLR, Apple Color Emoji sbix) natively.
+  let Canvas: any;
+  let skiaMod: any;
   try {
-    canvasMod = await import("canvas");
-    createCanvas = canvasMod.createCanvas;
+    skiaMod = await import("skia-canvas");
+    Canvas = skiaMod.Canvas;
   } catch {
-    return { error: "canvas package not available" };
+    return { error: "skia-canvas package not available" };
   }
-  registerEmojiFontOnce(canvasMod);
+  registerEmojiFontOnce(skiaMod);
 
   // Access the xterm instance from the terminal wrapper
   // The wrapper exposes readScreen but we need the raw buffer for cell colors
@@ -163,10 +160,15 @@ export async function handleScreenshotSession(
   );
   const rows = rawLines.length;
 
-  // Font metrics (Menlo 12pt) at 2x Retina scale
+  // Font metrics (Menlo 12pt) at 2x Retina scale.
+  // Skia does per-glyph system fallback when only one family is named,
+  // so on macOS ✅/❌/etc resolve to Apple Color Emoji and render in
+  // full color. Listing more than one family breaks that fallback (the
+  // matcher locks to whichever family has the cmap entry, even if the
+  // glyph itself is missing), so keep this single-family.
   const scale = 2;
   const fontSize = 12 * scale;
-  const fontFamily = "Menlo, EmojiFallback";
+  const fontFamily = "Menlo";
   const cellWidth = 7.22 * scale;
   const cellHeight = 15 * scale;
   const padding = { x: 10 * scale, y: 8 * scale };
@@ -174,17 +176,18 @@ export async function handleScreenshotSession(
   const canvasWidth = Math.ceil(cols * cellWidth + padding.x * 2);
   const canvasHeight = Math.ceil(rows * cellHeight + padding.y * 2);
 
-  const canvas = createCanvas(canvasWidth, canvasHeight);
+  const canvas = new Canvas(canvasWidth, canvasHeight);
   const ctx = canvas.getContext("2d");
 
-  // Background
-  ctx.fillStyle = "#000000";
+  // Background — pulled from the shared theme so the PNG matches the
+  // live viewer's chrome (which itself matches Ghostty defaults).
+  ctx.fillStyle = theme.background;
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   ctx.font = `${fontSize}px ${fontFamily}`;
   ctx.textBaseline = "top";
 
-  const defaultFg = "#f0f0f0";
+  const defaultFg = theme.foreground;
   const defaultBg: string | null = null;
 
   for (let row = 0; row < rawLines.length; row++) {
@@ -293,6 +296,6 @@ export async function handleScreenshotSession(
   }
 
   // Export as PNG
-  const pngBuffer = canvas.toBuffer("image/png");
+  const pngBuffer: Buffer = canvas.toBufferSync("png");
   return { image_data: pngBuffer.toString("base64") };
 }
