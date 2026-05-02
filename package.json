@@ -15,7 +15,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && chmod +x dist/bin.js dist/index.js",
+    "build": "tsc && chmod +x dist/bin.js dist/index.js && mkdir -p dist/assets && cp -R src/assets/. dist/assets/",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
@@ -59,7 +59,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@xterm/headless": "^5.5.0",
-    "canvas": "^3.2.3",
+    "skia-canvas": "^3.0.8",
     "zod": "^3.24.0"
   },
   "optionalDependencies": {
