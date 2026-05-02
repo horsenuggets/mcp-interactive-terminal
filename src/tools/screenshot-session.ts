@@ -45,6 +45,83 @@ function rgbToHex(r: number, g: number, b: number): string {
 }
 
 /**
+ * Returns the terminal cell width of a single codepoint: 0 (zero-width),
+ * 1 (narrow), or 2 (wide). Covers emoji, CJK, and common zero-width ranges.
+ * Not a full wcwidth implementation — sufficient for the rendering we do here.
+ */
+function codepointWidth(cp: number): 0 | 1 | 2 {
+  // Control chars and DEL
+  if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) return 0;
+  // Zero-width
+  if (
+    (cp >= 0x200b && cp <= 0x200f) ||
+    (cp >= 0x202a && cp <= 0x202e) ||
+    (cp >= 0x2060 && cp <= 0x2064) ||
+    cp === 0xfeff ||
+    (cp >= 0xfe00 && cp <= 0xfe0f) || // variation selectors
+    (cp >= 0x0300 && cp <= 0x036f)    // combining diacritics
+  ) return 0;
+  // Wide ranges (CJK + emoji-ish blocks)
+  if (
+    (cp >= 0x1100 && cp <= 0x115f) ||
+    (cp >= 0x2e80 && cp <= 0x303e) ||
+    (cp >= 0x3041 && cp <= 0x33ff) ||
+    (cp >= 0x3400 && cp <= 0x4dbf) ||
+    (cp >= 0x4e00 && cp <= 0x9fff) ||
+    (cp >= 0xa000 && cp <= 0xa4cf) ||
+    (cp >= 0xac00 && cp <= 0xd7a3) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xfe30 && cp <= 0xfe4f) ||
+    (cp >= 0xff00 && cp <= 0xff60) ||
+    (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x1f300 && cp <= 0x1f64f) ||
+    (cp >= 0x1f680 && cp <= 0x1f6ff) ||
+    (cp >= 0x1f900 && cp <= 0x1f9ff) ||
+    (cp >= 0x1fa00 && cp <= 0x1faff) ||
+    (cp >= 0x20000 && cp <= 0x2fffd) ||
+    (cp >= 0x30000 && cp <= 0x3fffd)
+  ) return 2;
+  // Misc Symbols / Dingbats: width 2 if Emoji_Presentation=Yes
+  if (cp >= 0x2600 && cp <= 0x27bf) {
+    if (EMOJI_PRESENTATION_2600_27BF.has(cp)) return 2;
+    return 1;
+  }
+  return 1;
+}
+
+const EMOJI_PRESENTATION_2600_27BF = new Set<number>([
+  0x2614, 0x2615, 0x2648, 0x2649, 0x264a, 0x264b, 0x264c, 0x264d, 0x264e,
+  0x264f, 0x2650, 0x2651, 0x2652, 0x2653, 0x267f, 0x2693, 0x26a1, 0x26aa,
+  0x26ab, 0x26bd, 0x26be, 0x26c4, 0x26c5, 0x26ce, 0x26d4, 0x26ea, 0x26f2,
+  0x26f3, 0x26f5, 0x26fa, 0x26fd, 0x2705, 0x270a, 0x270b, 0x2728, 0x274c,
+  0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0,
+  0x27bf,
+]);
+
+// Try to register Apple Color Emoji once. Cairo can't render its color
+// bitmap tables but it does pick up the monochrome outlines, which is far
+// better than Menlo's tofu boxes. Best-effort — silently ignore failures.
+let emojiFontRegistered = false;
+function registerEmojiFontOnce(canvasMod: any): void {
+  if (emojiFontRegistered) return;
+  emojiFontRegistered = true;
+  const candidates = [
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+    "/Library/Fonts/Apple Color Emoji.ttc",
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+  ];
+  for (const path of candidates) {
+    try {
+      canvasMod.registerFont(path, { family: "EmojiFallback" });
+      return;
+    } catch {
+      // try next
+    }
+  }
+}
+
+/**
  * Render the terminal buffer to a PNG image using node-canvas.
  * Reads cell data from xterm-headless and draws it with proper colors.
  */
@@ -61,12 +138,14 @@ export async function handleScreenshotSession(
 
   // Dynamic import canvas (it's a native module)
   let createCanvas: (w: number, h: number) => any;
+  let canvasMod: any;
   try {
-    const canvasMod = await import("canvas");
+    canvasMod = await import("canvas");
     createCanvas = canvasMod.createCanvas;
   } catch {
     return { error: "canvas package not available" };
   }
+  registerEmojiFontOnce(canvasMod);
 
   // Access the xterm instance from the terminal wrapper
   // The wrapper exposes readScreen but we need the raw buffer for cell colors
@@ -87,7 +166,7 @@ export async function handleScreenshotSession(
   // Font metrics (Menlo 12pt) at 2x Retina scale
   const scale = 2;
   const fontSize = 12 * scale;
-  const fontFamily = "Menlo";
+  const fontFamily = "Menlo, EmojiFallback";
   const cellWidth = 7.22 * scale;
   const cellHeight = 15 * scale;
   const padding = { x: 10 * scale, y: 8 * scale };
@@ -106,6 +185,7 @@ export async function handleScreenshotSession(
   ctx.textBaseline = "top";
 
   const defaultFg = "#f0f0f0";
+  const defaultBg: string | null = null;
 
   for (let row = 0; row < rawLines.length; row++) {
     const line = rawLines[row];
@@ -113,6 +193,7 @@ export async function handleScreenshotSession(
 
     let col = 0;
     let fg = defaultFg;
+    let bg: string | null = defaultBg;
     let bold = false;
     let i = 0;
 
@@ -125,13 +206,19 @@ export async function handleScreenshotSession(
           let j = 0;
           while (j < codes.length) {
             const c = codes[j];
-            if (c === 0) { fg = defaultFg; bold = false; }
+            if (c === 0) { fg = defaultFg; bg = defaultBg; bold = false; }
             else if (c === 1) { bold = true; }
             else if (c === 22) { bold = false; }
             else if (c >= 30 && c <= 37) { fg = PALETTE[c - 30 + (bold ? 8 : 0)] ?? defaultFg; }
             else if (c === 39) { fg = defaultFg; }
+            else if (c >= 40 && c <= 47) { bg = PALETTE[c - 40] ?? defaultBg; }
+            else if (c === 49) { bg = defaultBg; }
+            else if (c >= 90 && c <= 97) { fg = PALETTE[c - 90 + 8] ?? defaultFg; }
+            else if (c >= 100 && c <= 107) { bg = PALETTE[c - 100 + 8] ?? defaultBg; }
             else if (c === 38 && codes[j + 1] === 5) { fg = PALETTE[codes[j + 2]] ?? defaultFg; j += 2; }
             else if (c === 38 && codes[j + 1] === 2) { fg = rgbToHex(codes[j + 2], codes[j + 3], codes[j + 4]); j += 4; }
+            else if (c === 48 && codes[j + 1] === 5) { bg = PALETTE[codes[j + 2]] ?? defaultBg; j += 2; }
+            else if (c === 48 && codes[j + 1] === 2) { bg = rgbToHex(codes[j + 2], codes[j + 3], codes[j + 4]); j += 4; }
             j++;
           }
           i = end + 1;
@@ -139,16 +226,34 @@ export async function handleScreenshotSession(
         }
       }
 
-      // Draw character
-      const ch = line[i];
+      // Read a full codepoint (handle surrogate pairs) so emoji and other
+      // astral chars don't get split.
+      const cp = line.codePointAt(i)!;
+      const ch = String.fromCodePoint(cp);
+      const advance = ch.length;
+      const cw = codepointWidth(cp);
+
+      if (cw === 0) {
+        // Zero-width: draw on top of previous cell (no advance, no fill)
+        i += advance;
+        continue;
+      }
+
       const x = padding.x + col * cellWidth;
       const y = padding.y + row * cellHeight;
+      const widthPx = cellWidth * cw;
+
+      if (bg) {
+        ctx.fillStyle = bg;
+        ctx.fillRect(x, y, widthPx, cellHeight);
+      }
+
       ctx.fillStyle = fg;
-      if (bold) ctx.font = `bold ${fontSize}px ${fontFamily}`;
-      else ctx.font = `${fontSize}px ${fontFamily}`;
+      ctx.font = `${bold ? "bold " : ""}${fontSize}px ${fontFamily}`;
       ctx.fillText(ch, x, y);
-      col++;
-      i++;
+
+      col += cw;
+      i += advance;
     }
   }
 
