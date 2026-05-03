@@ -18,7 +18,7 @@
         "decorations": true,
         "transparent": false,
         "focus": false,
-        "visible": false
+        "visible": true
       }
     ],
     "security": {

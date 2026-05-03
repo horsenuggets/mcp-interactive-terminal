@@ -162,16 +162,44 @@ pub fn run() {
                 )?;
             }
 
-            // Inject terminal dimensions into the webview as a global variable.
-            // This runs before the page JS executes, so it's always available.
+            // Inject terminal dimensions into the webview as a global variable
+            // and immediately hide the window. The window is created with
+            // `visible: true` in tauri.conf.json (see comment below) and we
+            // only ever want to display it once JS has measured the cell
+            // grid and resized to the right dimensions — so we hide it
+            // synchronously here, then show it again from the
+            // `viewer-ready` listener.
+            //
+            // Why `visible: true` + immediate `hide()` instead of the simpler
+            // `visible: false`:
+            //
+            // On macOS, a window created with `visible: false` never
+            // attaches a visible NSView to the WKWebView's host. WKWebView
+            // sees `window visible 0, view hidden 0, window occluded 1` and
+            // its ProcessThrottler drives the WebContent process into a
+            // `markLayersVolatile` retry loop and then suspends it —
+            // sometimes before the page JS has had a chance to run, in
+            // which case `viewer-ready` never fires and the window never
+            // becomes visible. Creating the window visible and then hiding
+            // it lets WKWebView complete initial layout against a real
+            // host view, so the throttler keeps the content runnable.
+            //
+            // This race is reproducible enough that we got bitten by it:
+            // see the documented Tauri reports (tauri-apps/tauri
+            // discussion #12973, issues #7669 / #5583 / #2100) and the
+            // matching WKWebView log signature `WebProcess::prepareToSuspend
+            // isSuspensionImminent=0` followed by
+            // `WebPage::markLayersVolatile: Failed to mark all layers as
+            // volatile, will retry in N ms`.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.eval(&format!(
                     "window.__TERMINAL_CONFIG__ = {{ cols: {}, rows: {} }};",
                     cols, rows
                 ));
+                let _ = window.hide();
             }
 
-            // Show window when JS signals ready (after resize)
+            // Show window when JS signals ready (after resize).
             let handle_show = app.handle().clone();
             let fg = foreground;
             app.handle().listen("viewer-ready", move |_| {
