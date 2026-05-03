@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "esbuild src/main.js --bundle --format=esm --loader:.json=json --outfile=dist/main.js && cp src/index.html src/viewer.css dist/ && cp node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/xterm/css/xterm.css node_modules/@xterm/addon-fit/lib/addon-fit.js dist/ && mv dist/addon-fit.js dist/xterm-addon-fit.js",
+    "build": "esbuild src/main.js --bundle --format=esm --outfile=dist/main.js && cp src/index.html src/viewer.css dist/ && cp node_modules/@xterm/xterm/css/xterm.css dist/",
     "tauri:build": "cd src-tauri && cargo tauri build && bash scripts/rename-bundle-executable.sh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
