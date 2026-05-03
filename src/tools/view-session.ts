@@ -21,11 +21,16 @@ export type ViewSessionArgs = z.infer<typeof viewSessionSchema>;
  */
 function findMacAppBundle(binaryPath: string): string | null {
   const dir = dirname(binaryPath);
-  const candidates = [
+  const candidates: string[] = [
     join(dir, "bundle", "macos", "Terminal Viewer.app"),
     "/Applications/Terminal Viewer.app",
-    join(process.env.HOME ?? "", "Applications", "Terminal Viewer.app"),
   ];
+  // Only add the per-user Applications path when HOME is actually set —
+  // a missing HOME would otherwise produce a relative path that
+  // resolves against the current working directory.
+  if (process.env.HOME) {
+    candidates.push(join(process.env.HOME, "Applications", "Terminal Viewer.app"));
+  }
   for (const p of candidates) {
     if (existsSync(p)) return p;
   }

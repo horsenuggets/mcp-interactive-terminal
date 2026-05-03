@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { SessionManager } from "../session-manager.js";
 
@@ -107,9 +108,11 @@ function registerEmojiFontOnce(skiaMod: any): void {
   // The bundled font ships at dist/assets/TwemojiMozilla.ttf (copied
   // there by the build script). Resolve via import.meta.url so the
   // lookup works under npm install, npx, and global installs alike.
+  // Convert through fileURLToPath so paths with spaces / Windows drive
+  // letters survive — `url.pathname` would leave them percent-encoded.
   try {
     const url = new URL("../assets/TwemojiMozilla.ttf", import.meta.url);
-    skiaMod.FontLibrary.use("EmojiFallback", [url.pathname]);
+    skiaMod.FontLibrary.use("EmojiFallback", [fileURLToPath(url)]);
   } catch {
     // ignore — emoji will fall back to the system fonts below
   }
@@ -144,18 +147,23 @@ export async function handleScreenshotSession(
   }
   registerEmojiFontOnce(skiaMod);
 
-  // Access the xterm instance from the terminal wrapper
-  // The wrapper exposes readScreen but we need the raw buffer for cell colors
-  const screen = terminal.readScreen(false, false);
-  const lines = screen.text.split("\n");
-
-  // Get actual terminal dimensions from the cursor position or raw screen
+  // We need the raw buffer (with SGR codes preserved) for cell colors.
   const cursor = terminal.getCursorPosition();
   const rawScreen = terminal.readScreen(false, true);
   const rawLines = rawScreen.text.split("\n");
-  // Infer cols from the widest raw line (stripping ANSI), rows from line count
+  // Infer cols from the widest raw line, summing terminal cell widths
+  // per codepoint — string.length over UTF-16 code units would
+  // underestimate for CJK / emoji and crop the right side of the PNG.
+  const visibleWidth = (line: string): number => {
+    const stripped = line.replace(/\x1b\[[0-9;]*m/g, "");
+    let w = 0;
+    for (const ch of stripped) {
+      w += codepointWidth(ch.codePointAt(0)!);
+    }
+    return w;
+  };
   const cols = Math.max(
-    ...rawLines.map(l => l.replace(/\x1b\[[0-9;]*m/g, "").length),
+    ...rawLines.map(visibleWidth),
     cursor ? cursor.col : 40,
   );
   const rows = rawLines.length;

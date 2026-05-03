@@ -14,6 +14,14 @@
 
 set -euo pipefail
 
+# macOS-only: this script uses `plutil` and `codesign`. On other
+# platforms (Linux/Windows builds via cross-compilation) the .app
+# bundle does not exist and the tools aren't available — exit 0 so
+# `npm run tauri:build` doesn't fail there.
+if [[ "$(uname)" != "Darwin" ]]; then
+  exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="Terminal Viewer.app"
 NEW_EXECUTABLE="Terminal Viewer"
