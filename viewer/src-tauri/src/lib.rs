@@ -121,6 +121,85 @@ fn set_macos_app_name(name: &str) {
     }
 }
 
+/// Force the macOS menu bar's app menu title to a fixed string.
+///
+/// AppKit constructs the bold app-name item in the menu bar from the
+/// running application's `localizedName`, which for non-bundled launches
+/// falls back to the executable filename — `terminal-viewer`. We already
+/// override the process name early via `set_macos_app_name`, but AppKit
+/// caches `localizedName` at `NSApplication` initialization, so the
+/// process-name override only wins if it runs before AppKit reads it.
+/// That race is what produced the inconsistent menu bar title.
+///
+/// Setting the first main-menu item's title directly (the bold app menu)
+/// is unconditional and runs after AppKit has built the menu, so it
+/// always wins regardless of how the binary was launched.
+#[cfg(target_os = "macos")]
+fn force_macos_menu_title(name: &str) {
+    use std::ffi::CString;
+    type Id = *mut std::ffi::c_void;
+    type Sel = *mut std::ffi::c_void;
+    type MsgSend0 = unsafe extern "C" fn(Id, Sel) -> Id;
+    type MsgSend1Long = unsafe extern "C" fn(Id, Sel, std::os::raw::c_long) -> Id;
+    type MsgSend1Ptr = unsafe extern "C" fn(Id, Sel, *const std::ffi::c_char) -> Id;
+    type MsgSend1IdVoid = unsafe extern "C" fn(Id, Sel, Id);
+    unsafe {
+        let msg0: MsgSend0 = std::mem::transmute(objc_msgSend as *const ());
+        let msg1_long: MsgSend1Long = std::mem::transmute(objc_msgSend as *const ());
+        let msg1_ptr: MsgSend1Ptr = std::mem::transmute(objc_msgSend as *const ());
+        let msg1_id_void: MsgSend1IdVoid = std::mem::transmute(objc_msgSend as *const ());
+
+        // [NSApplication sharedApplication]
+        let ns_application_cls = objc_getClass(b"NSApplication\0".as_ptr() as *const _);
+        if ns_application_cls.is_null() {
+            return;
+        }
+        let sel_shared = sel_registerName(b"sharedApplication\0".as_ptr() as *const _);
+        let app = msg0(ns_application_cls, sel_shared);
+        if app.is_null() {
+            return;
+        }
+
+        // [app mainMenu]
+        let sel_main_menu = sel_registerName(b"mainMenu\0".as_ptr() as *const _);
+        let main_menu = msg0(app, sel_main_menu);
+        if main_menu.is_null() {
+            return;
+        }
+
+        // [main_menu itemAtIndex:0] — the app menu (bold name in menu bar).
+        let sel_item_at_index = sel_registerName(b"itemAtIndex:\0".as_ptr() as *const _);
+        let app_item = msg1_long(main_menu, sel_item_at_index, 0);
+        if app_item.is_null() {
+            return;
+        }
+
+        // Build NSString.
+        let ns_string_cls = objc_getClass(b"NSString\0".as_ptr() as *const _);
+        if ns_string_cls.is_null() {
+            return;
+        }
+        let sel_with_utf8 = sel_registerName(b"stringWithUTF8String:\0".as_ptr() as *const _);
+        let name_c = match CString::new(name) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let ns_name = msg1_ptr(ns_string_cls, sel_with_utf8, name_c.as_ptr());
+
+        // Set title on the app menu item AND on its submenu — different
+        // macOS versions render the bold menu bar name from one or the
+        // other, so we set both to avoid relying on undocumented behavior.
+        let sel_set_title = sel_registerName(b"setTitle:\0".as_ptr() as *const _);
+        msg1_id_void(app_item, sel_set_title, ns_name);
+
+        let sel_submenu = sel_registerName(b"submenu\0".as_ptr() as *const _);
+        let submenu = msg0(app_item, sel_submenu);
+        if !submenu.is_null() {
+            msg1_id_void(submenu, sel_set_title, ns_name);
+        }
+    }
+}
+
 /// Parse a flag value like --cols=120 or --cols 120
 fn parse_flag(args: &[String], flag: &str) -> Option<String> {
     for (i, arg) in args.iter().enumerate() {
@@ -137,7 +216,10 @@ fn parse_flag(args: &[String], flag: &str) -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Bundled launches read the app name from CFBundleName (set by Tauri's
-    // productName), so the override is only needed for direct binary launches.
+    // productName), so the early process-name override is only needed for
+    // direct binary launches. We additionally rewrite the menu bar title
+    // unconditionally from the `setup` hook below — that pass is what
+    // makes the title deterministic across launch modes.
     #[cfg(target_os = "macos")]
     if !is_bundled_macos_launch() {
         set_macos_app_name("Terminal Viewer");
@@ -154,6 +236,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(move |app| {
+            // Force the bold app-name shown in the macOS menu bar to
+            // "Terminal Viewer" regardless of how the binary was
+            // launched (direct exec vs `open -a "Terminal Viewer.app"`).
+            // This runs after AppKit has constructed its main menu, so
+            // it wins over both the executable-filename fallback and
+            // any cached `localizedName`.
+            #[cfg(target_os = "macos")]
+            force_macos_menu_title("Terminal Viewer");
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
