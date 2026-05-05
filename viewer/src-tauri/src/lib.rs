@@ -36,6 +36,13 @@ async fn stream_pty_data(app: AppHandle, socket_path: String) {
     }
 }
 
+/// Single source of truth for the user-visible product name. Both the
+/// process-name override (`set_macos_app_name`) and the menu-bar-title
+/// override (`force_macos_menu_title`) read from this so they can't
+/// drift if the product is ever renamed.
+#[cfg(target_os = "macos")]
+const APP_DISPLAY_NAME: &str = "Terminal Viewer";
+
 extern "C" {
     fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
     fn objc_getClass(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
@@ -222,7 +229,7 @@ pub fn run() {
     // makes the title deterministic across launch modes.
     #[cfg(target_os = "macos")]
     if !is_bundled_macos_launch() {
-        set_macos_app_name("Terminal Viewer");
+        set_macos_app_name(APP_DISPLAY_NAME);
     }
 
     let args: Vec<String> = env::args().collect();
@@ -243,7 +250,7 @@ pub fn run() {
             // it wins over both the executable-filename fallback and
             // any cached `localizedName`.
             #[cfg(target_os = "macos")]
-            force_macos_menu_title("Terminal Viewer");
+            force_macos_menu_title(APP_DISPLAY_NAME);
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
