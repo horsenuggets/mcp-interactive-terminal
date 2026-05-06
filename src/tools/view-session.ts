@@ -76,8 +76,14 @@ export async function handleViewSession(
   const appBundle = process.platform === "darwin" ? findMacAppBundle(viewerPath) : null;
   if (appBundle) {
     // `open -n -a APP --args ...` launches a new instance and forwards
-    // the remaining args to the app's main executable.
-    const openArgs = ["-n", "-a", appBundle, "--args", ...viewerArgs];
+    // the remaining args to the app's main executable. `-g` keeps the
+    // app from stealing focus from whatever the user is currently doing
+    // — only opt out of it when the caller explicitly wants foreground.
+    const openArgs = ["-n"];
+    if (!args.foreground) {
+      openArgs.push("-g");
+    }
+    openArgs.push("-a", appBundle, "--args", ...viewerArgs);
     const child = spawn("open", openArgs, { detached: true, stdio: "ignore" });
     child.unref();
   } else {
