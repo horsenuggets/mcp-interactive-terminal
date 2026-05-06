@@ -65,6 +65,41 @@ fn order_window_back(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Switch the running app to `NSApplicationActivationPolicyAccessory`
+/// so it does not activate (steal focus) when its first window appears.
+///
+/// `.accessory` apps have no Dock icon and no Cmd+Tab entry, but they
+/// can still display windows. This is the AppKit-blessed way to show
+/// a window without taking focus from whatever the user is doing —
+/// `[NSApp deactivate]` is queued and only fires when another app
+/// activates, so it cannot undo Tauri's launch-time activation.
+#[cfg(target_os = "macos")]
+fn set_accessory_activation_policy() {
+    // `NSApplicationActivationPolicyAccessory` = 1.
+    const POLICY_ACCESSORY: i64 = 1;
+    type Id = *mut std::ffi::c_void;
+    type Sel = *mut std::ffi::c_void;
+    // Objective-C `BOOL` is `signed char` (`i8`), not Rust `bool` —
+    // declaring the return type as `bool` would be UB for any non-0/1
+    // byte the runtime returns. We don't need the return value either
+    // way, so use `c_char`.
+    type MsgSend0Id = unsafe extern "C" fn(Id, Sel) -> Id;
+    type MsgSend1IsizeBool =
+        unsafe extern "C" fn(Id, Sel, i64) -> std::os::raw::c_char;
+    unsafe {
+        let ns_application_cls = objc_getClass(b"NSApplication\0".as_ptr() as *const _);
+        let shared_sel = sel_registerName(b"sharedApplication\0".as_ptr() as *const _);
+        let msg0_id: MsgSend0Id = std::mem::transmute(objc_msgSend as *const ());
+        let app: Id = msg0_id(ns_application_cls as *mut _, shared_sel);
+        if !app.is_null() {
+            let policy_sel = sel_registerName(b"setActivationPolicy:\0".as_ptr() as *const _);
+            let msg1_isize_bool: MsgSend1IsizeBool =
+                std::mem::transmute(objc_msgSend as *const ());
+            let _ = msg1_isize_bool(app, policy_sel, POLICY_ACCESSORY);
+        }
+    }
+}
+
 /// True if this process was launched from inside a macOS `.app` bundle.
 ///
 /// AppKit reads the menu bar app name from `CFBundleName` for bundled launches,
@@ -251,6 +286,21 @@ pub fn run() {
             // any cached `localizedName`.
             #[cfg(target_os = "macos")]
             force_macos_menu_title(APP_DISPLAY_NAME);
+
+            // When we're launching as a background viewer, set the
+            // activation policy to `.accessory` so AppKit does not
+            // activate the app during window creation. `.accessory`
+            // means no Dock icon and no Cmd+Tab presence — the window
+            // still appears on screen and is clickable, but the user's
+            // current app keeps focus. `[NSApp deactivate]` alone is
+            // not sufficient: Tauri activates the app when the first
+            // visible window is created, and `deactivate` only takes
+            // effect once another app activates, which never happens
+            // because we just stole focus.
+            #[cfg(target_os = "macos")]
+            if !foreground {
+                set_accessory_activation_policy();
+            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
