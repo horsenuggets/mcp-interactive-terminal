@@ -79,8 +79,13 @@ fn set_accessory_activation_policy() {
     const POLICY_ACCESSORY: i64 = 1;
     type Id = *mut std::ffi::c_void;
     type Sel = *mut std::ffi::c_void;
+    // Objective-C `BOOL` is `signed char` (`i8`), not Rust `bool` —
+    // declaring the return type as `bool` would be UB for any non-0/1
+    // byte the runtime returns. We don't need the return value either
+    // way, so use `c_char`.
     type MsgSend0Id = unsafe extern "C" fn(Id, Sel) -> Id;
-    type MsgSend1IsizeBool = unsafe extern "C" fn(Id, Sel, i64) -> bool;
+    type MsgSend1IsizeBool =
+        unsafe extern "C" fn(Id, Sel, i64) -> std::os::raw::c_char;
     unsafe {
         let ns_application_cls = objc_getClass(b"NSApplication\0".as_ptr() as *const _);
         let shared_sel = sel_registerName(b"sharedApplication\0".as_ptr() as *const _);
@@ -90,7 +95,7 @@ fn set_accessory_activation_policy() {
             let policy_sel = sel_registerName(b"setActivationPolicy:\0".as_ptr() as *const _);
             let msg1_isize_bool: MsgSend1IsizeBool =
                 std::mem::transmute(objc_msgSend as *const ());
-            msg1_isize_bool(app, policy_sel, POLICY_ACCESSORY);
+            let _ = msg1_isize_bool(app, policy_sel, POLICY_ACCESSORY);
         }
     }
 }
