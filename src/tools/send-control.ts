@@ -34,11 +34,41 @@ export const sendControlSchema = z.object({
   count: z.number().int().min(1).max(100).default(1).describe(
     "Number of times to send the control sequence (default: 1). Useful for sending multiple wheel ticks."
   ),
+  interval_ms: z.number().int().min(0).max(5000).default(0).describe(
+    "Milliseconds to wait between repeated events when count > 1. Default 0 sends all events in one PTY write (they coalesce into one input batch in the target process). Set to ~16 to mimic 60Hz trackpad wheel events, ~33 for 30Hz, ~50 for slower deliberate keypresses. Required for reproducing UI bugs that depend on inter-event timing — e.g. React renders/commits landing between events."
+  ),
 });
 
 export type SendControlArgs = z.infer<typeof sendControlSchema>;
 
 const CONTROL_WAIT_MS = 500;
+
+/**
+ * Write `sequence` to the PTY `count` times. When `intervalMs > 0`, waits
+ * between writes so the target process sees N separate input batches
+ * spaced by `intervalMs` (mimics real-user input timing — trackpad wheel
+ * ~16ms, key-repeat ~33-50ms). When `intervalMs === 0`, the writes are
+ * coalesced into a single PTY write that the kernel and target process
+ * see as one chunk (faster, but bypasses any event-driven app logic that
+ * depends on inter-event gaps).
+ */
+async function writeRepeated(
+  terminal: { write: (data: string) => void },
+  sequence: string,
+  count: number,
+  intervalMs: number,
+): Promise<void> {
+  if (intervalMs <= 0 || count <= 1) {
+    terminal.write(sequence.repeat(count));
+    return;
+  }
+  for (let i = 0; i < count; i++) {
+    terminal.write(sequence);
+    if (i < count - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+}
 
 export async function handleSendControl(
   args: SendControlArgs,
@@ -67,6 +97,9 @@ export async function handleSendControl(
   audit("control", args.session_id, { control: key });
   sessionManager.touchSession(args.session_id);
 
+  const count = args.count ?? 1;
+  const intervalMs = args.interval_ms ?? 0;
+
   // In pipe mode, certain control keys need special handling
   if (session.terminal.mode === "pipe") {
     if (key === "ctrl+d") {
@@ -89,16 +122,14 @@ export async function handleSendControl(
       // Also signal the shell process itself
       try { process.kill(session.terminal.pid, sig); } catch { /* ignore */ }
     } else {
-      const repeated = sequence.repeat(args.count ?? 1);
-      session.terminal.write(repeated);
+      await writeRepeated(session.terminal, sequence, count, intervalMs);
     }
   } else {
     // Write the raw byte to the PTY. In raw mode the \x03 byte is passed
     // through to the app's stdin — no kernel SIGINT is generated. Sending
     // an explicit SIGINT would bypass app-level double-press handlers (the
     // app sees the signal before the stdin byte) and cause premature exit.
-    const repeated = sequence.repeat(args.count ?? 1);
-    session.terminal.write(repeated);
+    await writeRepeated(session.terminal, sequence, count, intervalMs);
   }
 
   // Brief wait for response
