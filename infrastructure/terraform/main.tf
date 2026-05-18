@@ -62,11 +62,6 @@ resource "github_repository_ruleset" "main" {
       dismiss_stale_reviews_on_push   = true
     }
 
-    copilot_code_review {
-      review_on_push             = true
-      review_draft_pull_requests = false
-    }
-
     required_status_checks {
       dynamic "required_check" {
         for_each = local.required_checks
