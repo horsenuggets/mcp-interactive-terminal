@@ -156,10 +156,10 @@ function createServer(cfg?: ServerConfig) {
     "Send a control character or special key to a session (e.g., ctrl+c to interrupt, ctrl+d to send EOF, arrow keys, tab for completion).",
     sendControlSchema.shape,
     { title: "Send Control", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    async ({ session_id, control, count }) => {
+    async ({ session_id, control, count, interval_ms }) => {
       try {
         const result = await handleSendControl(
-          { session_id, control, count },
+          { session_id, control, count, interval_ms },
           sessionManager,
           config,
         );
