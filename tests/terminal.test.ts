@@ -64,4 +64,35 @@ describe("Terminal", () => {
 
     expect(() => terminal!.write("test\n")).toThrow(/not alive/);
   }, 10000);
+
+  // Regression: escape sequences (e.g. arrow keys "\x1b[B") must pass through
+  // write() to the PTY unmangled. If they are stripped, normalized, or split,
+  // arrow-key-driven TUIs cannot be navigated from MCP clients.
+  itPty("passes escape sequences through write() unmangled", async () => {
+    // Use a tiny python script that puts stdin into raw mode and echoes the
+    // exact bytes it reads back. This isolates "did the bytes survive the
+    // write path?" from any specific TUI's input parsing quirks.
+    const script = [
+      "import sys,tty,termios,os",
+      "fd=sys.stdin.fileno()",
+      "old=termios.tcgetattr(fd)",
+      "tty.setraw(fd)",
+      "try:",
+      "  b=os.read(fd,64)",
+      "  sys.stdout.write('GOT:'+repr(b)+'\\r\\n')",
+      "  sys.stdout.flush()",
+      "finally:",
+      "  termios.tcsetattr(fd,termios.TCSADRAIN,old)",
+    ].join("\n");
+
+    terminal = await createTerminal({ command: "python3", args: ["-c", script] });
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Three down-arrow escape sequences as a single 9-byte write
+    terminal.write("\x1b[B\x1b[B\x1b[B");
+    const { output } = await terminal.waitForOutput(2000);
+
+    // The script echoes the raw bytes via repr(); expect the exact 9 bytes.
+    expect(output).toContain("\\x1b[B\\x1b[B\\x1b[B");
+  }, 10000);
 });
