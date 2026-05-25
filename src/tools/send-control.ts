@@ -31,8 +31,8 @@ export const sendControlSchema = z.object({
   control: z.string().describe(
     `Control sequence to send. Supported: ${Object.keys(CONTROL_KEYS).join(", ")}`
   ),
-  count: z.number().int().min(1).max(100).default(1).describe(
-    "Number of times to send the control sequence (default: 1). Useful for sending multiple wheel ticks."
+  count: z.number().int().min(1).max(2000).default(1).describe(
+    "Number of times to send the control sequence (default: 1). Useful for sending multiple wheel ticks or simulating long key-repeat bursts. Cap is 2000 to keep total wall-clock time reasonable when interval_ms is set."
   ),
   interval_ms: z.number().int().min(0).max(5000).default(0).describe(
     "Milliseconds to wait between repeated events when count > 1. Default 0 sends all events in one PTY write (they coalesce into one input batch in the target process). Set to ~16 to mimic 60Hz trackpad wheel events, ~33 for 30Hz, ~50 for slower deliberate keypresses. Required for reproducing UI bugs that depend on inter-event timing — e.g. React renders/commits landing between events."
