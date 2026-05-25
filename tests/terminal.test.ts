@@ -72,27 +72,52 @@ describe("Terminal", () => {
     // Use a tiny python script that puts stdin into raw mode and echoes the
     // exact bytes it reads back. This isolates "did the bytes survive the
     // write path?" from any specific TUI's input parsing quirks.
+    //
+    // The script signals readiness with "READY\r\n" after setraw, then loops
+    // on os.read() until it has accumulated EXPECTED_BYTES (9 = three "\x1b[B")
+    // — PTY reads aren't guaranteed to coalesce, so a single read can return
+    // fewer bytes than were written without the bytes being mangled.
+    const EXPECTED_BYTES = 9;
     const script = [
       "import sys,tty,termios,os",
       "fd=sys.stdin.fileno()",
       "old=termios.tcgetattr(fd)",
       "tty.setraw(fd)",
       "try:",
-      "  b=os.read(fd,64)",
-      "  sys.stdout.write('GOT:'+repr(b)+'\\r\\n')",
+      "  sys.stdout.write('READY\\r\\n')",
+      "  sys.stdout.flush()",
+      "  buf=b''",
+      `  while len(buf)<${EXPECTED_BYTES}:`,
+      `    buf+=os.read(fd,${EXPECTED_BYTES}-len(buf))`,
+      "  sys.stdout.write('GOT:'+repr(buf)+'\\r\\n')",
       "  sys.stdout.flush()",
       "finally:",
       "  termios.tcsetattr(fd,termios.TCSADRAIN,old)",
     ].join("\n");
 
     terminal = await createTerminal({ command: "python3", args: ["-c", script] });
-    await new Promise((r) => setTimeout(r, 500));
+    // The contract under test only holds in PTY mode; pipe-mode fallback has
+    // a different input path. Fail explicitly rather than silently passing.
+    expect(terminal.mode).toBe("pty");
+
+    // Wait for the script's deterministic READY signal before writing, by
+    // polling readScreen() — more reliable than a fixed sleep.
+    const readyDeadline = Date.now() + 3000;
+    while (Date.now() < readyDeadline && !terminal.readScreen().text.includes("READY")) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(terminal.readScreen().text).toContain("READY");
 
     // Three down-arrow escape sequences as a single 9-byte write
     terminal.write("\x1b[B\x1b[B\x1b[B");
-    const { output } = await terminal.waitForOutput(2000);
+    const { output } = await terminal.waitForOutput(3000);
 
-    // The script echoes the raw bytes via repr(); expect the exact 9 bytes.
-    expect(output).toContain("\\x1b[B\\x1b[B\\x1b[B");
+    // The script echoes the raw bytes via repr(); enforce the exact 9-byte
+    // payload (not just substring containment) to lock in byte-for-byte
+    // passthrough — any stripping, splitting, or rewriting of ESC bytes
+    // would change the repr() output.
+    const match = output.match(/GOT:(b'[^']*')/);
+    expect(match, `expected GOT: line in output, got: ${output}`).not.toBeNull();
+    expect(match![1]).toBe("b'\\x1b[B\\x1b[B\\x1b[B'");
   }, 10000);
 });
