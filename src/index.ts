@@ -28,6 +28,12 @@ import {
 } from "./tools/confirm-dangerous-command.js";
 import { viewSessionSchema, handleViewSession } from "./tools/view-session.js";
 import { screenshotSessionSchema, handleScreenshotSession } from "./tools/screenshot-session.js";
+import {
+  startRecordingSchema,
+  handleStartRecording,
+  stopRecordingSchema,
+  handleStopRecording,
+} from "./tools/record-session.js";
 import { initSandbox, resetSandbox } from "./sandbox.js";
 import { configureAudit, audit } from "./utils/audit-logger.js";
 
@@ -247,6 +253,42 @@ function createServer(cfg?: ServerConfig) {
             { type: "image", data: result.image_data, mimeType: "image/png" },
           ],
         };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "start_recording",
+    "Start capturing the terminal's rendered text at a fixed FPS to a JSONL file. Each line is one frame: { t (ms since start), text (screen contents), cursor }. Use to record exactly what's on screen during a UI interaction (scroll, animation, redraw) so frames can be diffed afterwards to detect visual jumps. Call stop_recording to end. Only one recording per session at a time — starting a new one cancels the previous.",
+    startRecordingSchema.shape,
+    { title: "Start Recording", readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async ({ session_id, path, fps }) => {
+      try {
+        const result = await handleStartRecording({ session_id, path, fps }, sessionManager);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "stop_recording",
+    "Stop the active frame recording for a session. Returns { path, fps, frames, durationMs, fileSize } so you know what to read back. The JSONL is flushed continuously, so the file is already readable even before stop is called.",
+    stopRecordingSchema.shape,
+    { title: "Stop Recording", readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async ({ session_id }) => {
+      try {
+        const result = await handleStopRecording({ session_id });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {
           content: [{ type: "text", text: `Error: ${(err as Error).message}` }],

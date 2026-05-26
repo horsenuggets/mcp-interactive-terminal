@@ -7,3 +7,4 @@ dist/
 .mcpregistry_registry_token
 .smithery/
 .terraform/
+.worktrees/
