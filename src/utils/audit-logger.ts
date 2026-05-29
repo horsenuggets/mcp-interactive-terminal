@@ -27,8 +27,10 @@ export type AuditEvent =
   | "sandbox_fail"
   | "clipboard_set_text"
   | "clipboard_set_image"
+  | "clipboard_set_image_blocked"
   | "paste_text"
   | "paste_image"
+  | "paste_image_blocked"
   | "paste_empty";
 
 export interface AuditEntry {

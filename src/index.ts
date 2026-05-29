@@ -311,7 +311,7 @@ function createServer(cfg?: ServerConfig) {
     { title: "Copy to Clipboard", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async ({ text, image_path }) => {
       try {
-        const result = await handleCopyToClipboard({ text, image_path });
+        const result = await handleCopyToClipboard({ text, image_path }, sessionManager);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {

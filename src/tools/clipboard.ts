@@ -17,12 +17,31 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
+import { extname } from "node:path";
 import { z } from "zod";
 import type { SessionManager } from "../session-manager.js";
 import type { ServerConfig } from "../types.js";
 import { sanitize } from "../utils/sanitizer.js";
 import { redactSecrets } from "../utils/secret-redactor.js";
 import { audit } from "../utils/audit-logger.js";
+
+// Map known image file extensions to MIME types. The OS clipboard helpers
+// publish the image to the clipboard tagged with this type. Returning null
+// (rather than defaulting to PNG) lets the caller reject unknown formats
+// instead of silently mislabeling them.
+function detectImageMime(path: string): string | null {
+  switch (extname(path).toLowerCase()) {
+    case ".png": return "image/png";
+    case ".jpg":
+    case ".jpeg": return "image/jpeg";
+    case ".gif": return "image/gif";
+    case ".bmp": return "image/bmp";
+    case ".webp": return "image/webp";
+    case ".tif":
+    case ".tiff": return "image/tiff";
+    default: return null;
+  }
+}
 
 const execFileP = promisify(execFile);
 
@@ -42,11 +61,25 @@ async function setClipboardTextMac(text: string): Promise<void> {
   });
 }
 
-async function setClipboardImageMac(imagePath: string): Promise<void> {
-  // osascript reads the file and sets the clipboard as PNG.
+// osascript class codes for each supported image MIME type. Setting the
+// clipboard with the wrong code would publish the bytes under the wrong
+// flavor and consumers expecting one would fail to decode.
+const MAC_OSA_CLASS_BY_MIME: Record<string, string> = {
+  "image/png": "«class PNGf»",
+  "image/jpeg": "JPEG picture",
+  "image/gif": "GIF picture",
+  "image/tiff": "TIFF picture",
+  "image/bmp": "«class BMP »",
+};
+
+async function setClipboardImageMac(imagePath: string, mime: string): Promise<void> {
+  const klass = MAC_OSA_CLASS_BY_MIME[mime];
+  if (!klass) {
+    throw new Error(`Unsupported image type for macOS clipboard: ${mime}`);
+  }
   await execFileP("osascript", [
     "-e",
-    `set the clipboard to (read POSIX file "${imagePath.replace(/"/g, '\\"')}" as «class PNGf»)`,
+    `set the clipboard to (read POSIX file "${imagePath.replace(/"/g, '\\"')}" as ${klass})`,
   ]);
 }
 
@@ -76,10 +109,10 @@ async function setClipboardTextLinux(text: string): Promise<void> {
   throw new Error("No clipboard tool found (tried wl-copy, xclip, xsel)");
 }
 
-async function setClipboardImageLinux(imagePath: string): Promise<void> {
+async function setClipboardImageLinux(imagePath: string, mime: string): Promise<void> {
   const tools: Array<{ cmd: string; args: string[] }> = [
-    { cmd: "wl-copy", args: ["--type", "image/png"] },
-    { cmd: "xclip", args: ["-selection", "clipboard", "-t", "image/png", "-i", imagePath] },
+    { cmd: "wl-copy", args: ["--type", mime] },
+    { cmd: "xclip", args: ["-selection", "clipboard", "-t", mime, "-i", imagePath] },
   ];
   for (const t of tools) {
     try {
@@ -149,8 +182,14 @@ export async function setClipboardText(text: string): Promise<void> {
 }
 
 export async function setClipboardImage(imagePath: string): Promise<void> {
-  if (process.platform === "darwin") return setClipboardImageMac(imagePath);
-  if (process.platform === "linux") return setClipboardImageLinux(imagePath);
+  const mime = detectImageMime(imagePath);
+  if (!mime) {
+    throw new Error(`Unsupported image extension: ${imagePath}. Expected PNG, JPEG, GIF, BMP, WebP, or TIFF.`);
+  }
+  if (process.platform === "darwin") return setClipboardImageMac(imagePath, mime);
+  if (process.platform === "linux") return setClipboardImageLinux(imagePath, mime);
+  // Windows: System.Windows.Forms.Clipboard.SetImage decodes any supported
+  // format and writes it as a CF_BITMAP, so the source MIME is moot.
   if (process.platform === "win32") return setClipboardImageWindows(imagePath);
   throw new Error(`Unsupported platform: ${process.platform}`);
 }
@@ -170,6 +209,7 @@ export type CopyToClipboardArgs = z.infer<typeof copyToClipboardSchema>;
 
 export async function handleCopyToClipboard(
   args: CopyToClipboardArgs,
+  sessionManager: SessionManager,
 ): Promise<{ ok: true; kind: "text" | "image" }> {
   const hasText = typeof args.text === "string";
   const hasImage = typeof args.image_path === "string" && args.image_path.length > 0;
@@ -181,8 +221,13 @@ export async function handleCopyToClipboard(
     await setClipboardText(args.text as string);
     return { ok: true, kind: "text" };
   }
-  audit("clipboard_set_image", undefined, { path: args.image_path });
-  await setClipboardImage(args.image_path as string);
+  const imagePath = args.image_path as string;
+  if (!sessionManager.isPathAllowed(imagePath)) {
+    audit("clipboard_set_image_blocked", undefined, { path: imagePath });
+    throw new Error(`Path "${imagePath}" is outside the configured allowed paths.`);
+  }
+  audit("clipboard_set_image", undefined, { path: imagePath });
+  await setClipboardImage(imagePath);
   return { ok: true, kind: "image" };
 }
 
@@ -228,8 +273,13 @@ export async function handlePaste(
   const count = args.count ?? 1;
   let kind: "text" | "image" | "empty";
   if (hasImage) {
-    audit("paste_image", args.session_id, { path: args.image_path, count });
-    await setClipboardImage(args.image_path as string);
+    const imagePath = args.image_path as string;
+    if (!sessionManager.isPathAllowed(imagePath)) {
+      audit("paste_image_blocked", args.session_id, { path: imagePath });
+      throw new Error(`Path "${imagePath}" is outside the configured allowed paths.`);
+    }
+    audit("paste_image", args.session_id, { path: imagePath, count });
+    await setClipboardImage(imagePath);
     // Empty bracketed paste — the TUI reads the clipboard itself.
     session.terminal.write((BRACKETED_PASTE_START + BRACKETED_PASTE_END).repeat(count));
     kind = "image";
