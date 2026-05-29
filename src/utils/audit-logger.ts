@@ -24,7 +24,12 @@ export type AuditEvent =
   | "read_output"
   | "list_sessions"
   | "sandbox_init"
-  | "sandbox_fail";
+  | "sandbox_fail"
+  | "clipboard_set_text"
+  | "clipboard_set_image"
+  | "paste_text"
+  | "paste_image"
+  | "paste_empty";
 
 export interface AuditEntry {
   ts: string;
