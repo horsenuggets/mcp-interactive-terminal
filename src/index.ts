@@ -34,6 +34,12 @@ import {
   stopRecordingSchema,
   handleStopRecording,
 } from "./tools/record-session.js";
+import {
+  copyToClipboardSchema,
+  handleCopyToClipboard,
+  pasteSchema,
+  handlePaste,
+} from "./tools/clipboard.js";
 import { initSandbox, resetSandbox } from "./sandbox.js";
 import { configureAudit, audit } from "./utils/audit-logger.js";
 
@@ -288,6 +294,42 @@ function createServer(cfg?: ServerConfig) {
     async ({ session_id }) => {
       try {
         const result = await handleStopRecording({ session_id });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "copy_to_clipboard",
+    "Write text or an image to the host OS clipboard. Pass exactly one of `text` or `image_path`. Works on macOS (pbcopy / osascript), Linux (wl-copy / xclip), and Windows (Set-Clipboard / System.Windows.Forms.Clipboard).",
+    copyToClipboardSchema.shape,
+    { title: "Copy to Clipboard", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    async ({ text, image_path }) => {
+      try {
+        const result = await handleCopyToClipboard({ text, image_path }, sessionManager);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "paste",
+    "Trigger a real paste event in a session. Writes a bracketed paste sequence (ESC[200~ ... ESC[201~) directly to the PTY so the TUI sees it as a paste, not as typed keystrokes. Pass `text` to paste literal text. Pass `image_path` to copy that image to the system clipboard and send an EMPTY bracketed paste — this is exactly what real terminals emit when a user presses Cmd+V / Ctrl+V with an image on the clipboard, and TUI apps that support image paste (CoderFish, Claude Code) will then read the clipboard themselves. With neither arg, sends an empty bracketed paste using whatever is currently on the clipboard.",
+    pasteSchema.shape,
+    { title: "Paste", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    async (input) => {
+      try {
+        const result = await handlePaste(input, sessionManager, config);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {
