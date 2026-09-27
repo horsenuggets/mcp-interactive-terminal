@@ -100,24 +100,31 @@ describe("drawBlockElement", () => {
   });
 
   // The seam bug this fix targets: adjacent cells must share an exact edge so
-  // solid runs tile with no gap or overlap. Two horizontally-adjacent full
-  // blocks should cover a continuous span, and two vertically-stacked ones too.
+  // solid runs tile with no gap or overlap. Paint neighbouring full blocks with
+  // the same fractional-then-rounded bounds the renderer uses and assert the
+  // rects they produce actually meet edge-to-edge.
   it("tiles adjacent full blocks with no seam or overlap", () => {
     const cellW = 7.22 * 2;
     const cellH = 15 * 2;
     const px = 20;
     const py = 16;
-    const boundX = (col: number) => Math.round(px + col * cellW);
-    const boundY = (row: number) => Math.round(py + row * cellH);
+    const bx = (col: number) => Math.round(px + col * cellW);
+    const by = (row: number) => Math.round(py + row * cellH);
 
-    // Horizontal neighbours: cell 0's right edge == cell 1's left edge.
-    const rightOf0 = boundX(1);
-    const leftOf1 = boundX(1);
-    expect(rightOf0).toBe(leftOf1);
+    // Horizontal neighbours (row 0, cols 0 and 1): cell 0's right edge must
+    // land exactly on cell 1's left edge.
+    const horiz = makeCtx();
+    drawBlockElement(horiz.ctx, 0x2588, bx(0), by(0), bx(1), by(1));
+    drawBlockElement(horiz.ctx, 0x2588, bx(1), by(0), bx(2), by(1));
+    const [h0, h1] = horiz.rects;
+    expect(h0!.x + h0!.w).toBe(h1!.x);
 
-    // Vertical neighbours: row 0's bottom edge == row 1's top edge.
-    const bottomOf0 = boundY(1);
-    const topOf1 = boundY(1);
-    expect(bottomOf0).toBe(topOf1);
+    // Vertical neighbours (col 0, rows 0 and 1): row 0's bottom edge must land
+    // exactly on row 1's top edge.
+    const vert = makeCtx();
+    drawBlockElement(vert.ctx, 0x2588, bx(0), by(0), bx(1), by(1));
+    drawBlockElement(vert.ctx, 0x2588, bx(0), by(1), bx(1), by(2));
+    const [v0, v1] = vert.rects;
+    expect(v0!.y + v0!.h).toBe(v1!.y);
   });
 });
