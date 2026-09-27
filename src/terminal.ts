@@ -10,13 +10,76 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import type { TerminalWrapper } from "./types.js";
-import { createViewerSocket, type ViewerSocket } from "./viewer-socket.js";
+import { eastAsianWidth } from "get-east-asian-width";
+import {
+  DEFAULT_COLS,
+  DEFAULT_ROWS,
+  type CellColorSpec,
+  type RenderCell,
+  type TerminalWrapper,
+} from "./types.js";
+import { createViewerSocket } from "./viewer-socket.js";
+import { renderScreenToPng } from "./skia-render.js";
 import { detectPromptPattern, endsWithPrompt } from "./utils/output-detector.js";
 import { stripAnsi } from "./utils/sanitizer.js";
 import { wrapCommand, isSandboxActive } from "./sandbox.js";
 
 const OUTPUT_SETTLE_MS = 300;
+
+// Coalesce viewer frame renders. A burst of PTY writes schedules a single
+// trailing render this many ms later, capping live-viewer output at ~30 fps
+// while keeping the window responsive to fast-updating TUIs.
+const VIEWER_FRAME_DEBOUNCE_MS = 33;
+
+/**
+ * Zero-width codepoints: control chars, joiners, variation selectors, and the
+ * common combining-mark blocks. These contribute 0 cells and fold into the
+ * preceding cell — matching how a legacy `wcwidth` treats them.
+ */
+function isZeroWidth(cp: number): boolean {
+  if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) return true;
+  if (cp === 0x200d || cp === 0xfeff) return true;
+  if (cp >= 0x200b && cp <= 0x200f) return true;
+  if (cp >= 0xfe00 && cp <= 0xfe0f) return true; // variation selectors (incl. VS16)
+  if (cp >= 0x0300 && cp <= 0x036f) return true; // combining diacritical marks
+  if (cp >= 0x1ab0 && cp <= 0x1aff) return true;
+  if (cp >= 0x1dc0 && cp <= 0x1dff) return true;
+  if (cp >= 0x20d0 && cp <= 0x20ff) return true;
+  if (cp >= 0xfe20 && cp <= 0xfe2f) return true;
+  if (cp >= 0xe0100 && cp <= 0xe01ef) return true;
+  return false;
+}
+
+/**
+ * Legacy per-codepoint width, mirroring the POSIX `wcwidth` that macOS ships
+ * (and that zsh/Ghostty `grapheme-width-method = legacy` use): East Asian Wide
+ * and emoji-presentation codepoints are 2 cells, everything else 1, and
+ * variation selectors / combining marks are 0. Crucially there is NO grapheme
+ * clustering, so `<base> U+FE0F` is `wcwidth(base) + 0` — e.g. `☑️` stays 1
+ * cell, unlike the Unicode-grapheme tables that widen it to 2.
+ */
+function legacyWcwidth(cp: number): 0 | 1 | 2 {
+  if (isZeroWidth(cp)) return 0;
+  return eastAsianWidth(cp, { ambiguousAsWide: false }) as 1 | 2;
+}
+
+/**
+ * A custom xterm Unicode provider implementing the legacy `wcwidth` model. It
+ * reports zero-width codepoints with `shouldJoin` so they still fold into the
+ * previous cell (keeping `☑️` a single 1-cell grapheme) without widening it.
+ */
+const LEGACY_UNICODE_PROVIDER = {
+  version: "legacy",
+  wcwidth: legacyWcwidth,
+  charProperties(codepoint: number, _preceding: number): number {
+    const width = legacyWcwidth(codepoint);
+    // Bit layout matches xterm's UnicodeService.createPropertyValue: the width
+    // occupies bits 1-2 and the shouldJoin flag bit 0. Zero-width marks set
+    // shouldJoin so the emulator combines them into the preceding cell.
+    const shouldJoin = width === 0 ? 1 : 0;
+    return (width << 1) | shouldJoin;
+  },
+};
 
 export interface TerminalOptions {
   command: string;
@@ -49,9 +112,36 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   const xtermMod = await import("@xterm/headless");
   const Terminal = xtermMod.Terminal ?? (xtermMod as any).default?.Terminal;
 
-  const cols = options.cols ?? 120;
-  const rows = options.rows ?? 40;
+  const cols = options.cols ?? DEFAULT_COLS;
+  const rows = options.rows ?? DEFAULT_ROWS;
   const xterm = new Terminal({ cols, rows, scrollback: 1000, allowProposedApi: true });
+
+  // Character-width table. Modern terminals (Ghostty `unicode`, iTerm2,
+  // WezTerm) use grapheme-cluster widths; the "15-graphemes" version matches
+  // that (Emoji_Presentation glyphs = 2 cells, "<base> U+FE0F" = one 2-cell
+  // cluster). Set MCP_TERMINAL_UNICODE_VERSION to pick a different table so a
+  // session can mimic a specific terminal. Valid values: "15-graphemes"
+  // (default), "15", "6", and "legacy" — the custom provider above that mirrors
+  // macOS `wcwidth` / Ghostty `grapheme-width-method = legacy`, where
+  // Emoji_Presentation glyphs are 2 cells but VS16 emoji (e.g. `☑️`) stay 1.
+  const unicodeVersion =
+    options.env?.MCP_TERMINAL_UNICODE_VERSION ??
+    process.env.MCP_TERMINAL_UNICODE_VERSION ??
+    "15-graphemes";
+  try {
+    if (unicodeVersion === "legacy") {
+      xterm.unicode.register(LEGACY_UNICODE_PROVIDER);
+    } else if (unicodeVersion !== "6") {
+      const graphemesMod = await import("@xterm/addon-unicode-graphemes");
+      xterm.loadAddon(new graphemesMod.UnicodeGraphemesAddon());
+    }
+    xterm.unicode.activeVersion = unicodeVersion;
+  } catch (err) {
+    console.error(
+      `[mcp-terminal] could not activate Unicode width version ` +
+        `"${unicodeVersion}" (${err}); falling back to the default table`,
+    );
+  }
 
   const ptyProcess = pty.spawn(options.command, options.args ?? [], {
     name: "xterm-256color",
@@ -71,9 +161,62 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   const sessionId = Math.random().toString(36).slice(2, 10);
   const viewerSocket = viewerEnabled ? createViewerSocket(sessionId) : null;
 
-  // Buffer raw PTY data so late-connecting viewers can replay
-  let rawDataBuffer = "";
-  const MAX_RAW_BUFFER = 256 * 1024; // 256KB
+  // Font config for the live viewer's skia frames. Reads the same env channel
+  // the screenshot tool uses (some MCP clients drop new tool args but always
+  // forward `env`), so the viewer and screenshots render with identical fonts.
+  const viewerFontsRaw = options.env?.MCP_TERMINAL_SCREENSHOT_FONTS;
+  const viewerFonts = viewerFontsRaw
+    ? viewerFontsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+  const viewerFontFamily = options.env?.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY;
+
+  // Debounced skia frame renderer for the viewer. skia-canvas is a native
+  // module loaded on first render and cached; if it can't load we simply stop
+  // trying (the viewer stays blank rather than crashing the session).
+  let skiaModCache: any = null;
+  let skiaUnavailable = false;
+  let renderTimer: ReturnType<typeof setTimeout> | null = null;
+  let renderInFlight = false;
+  let renderPending = false;
+
+  async function renderViewerFrameNow(): Promise<void> {
+    if (!viewerSocket || skiaUnavailable) return;
+    if (renderInFlight) { renderPending = true; return; }
+    renderInFlight = true;
+    try {
+      if (!skiaModCache) {
+        try {
+          skiaModCache = await import("skia-canvas");
+        } catch {
+          skiaUnavailable = true;
+          return;
+        }
+      }
+      const png = renderScreenToPng(wrapper, {
+        skiaMod: skiaModCache,
+        fonts: viewerFonts,
+        fontFamily: viewerFontFamily,
+        // Full fixed viewport so the viewer window stays a stable size instead
+        // of growing row by row as output streams in.
+        trim: false,
+      });
+      if (png) viewerSocket.writeFrame(png);
+    } finally {
+      renderInFlight = false;
+      if (renderPending) {
+        renderPending = false;
+        scheduleViewerFrame();
+      }
+    }
+  }
+
+  function scheduleViewerFrame(): void {
+    if (!viewerSocket || renderTimer) return;
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      void renderViewerFrameNow();
+    }, VIEWER_FRAME_DEBOUNCE_MS);
+  }
 
   // Track the last cursor position where the app intended the cursor.
   // Parse raw PTY data for cursor-show (\x1b[?25h) and CUP (\x1b[row;colH)
@@ -119,17 +262,26 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
     lastOutputTime = Date.now();
 
     if (viewerSocket) {
-      viewerSocket.write(data);
-      rawDataBuffer += data;
-      if (rawDataBuffer.length > MAX_RAW_BUFFER) {
-        rawDataBuffer = rawDataBuffer.slice(-MAX_RAW_BUFFER);
-      }
+      scheduleViewerFrame();
     }
   });
 
-  if (viewerSocket) {
-    viewerSocket.setReplayBuffer(() => rawDataBuffer);
-  }
+  // Wire the emulator's replies back to the PTY. xterm parses terminal
+  // queries — DSR/CPR cursor-position reports (ESC[6n), Device Attributes
+  // (ESC[c), etc. — and emits the answer through onData. Without forwarding
+  // that answer to the PTY, any program that asks the terminal a question
+  // (a `\x1b[6n` width probe, `tput`, some TUIs) hangs forever waiting for a
+  // reply. We only ever feed input to the PTY directly (never via
+  // xterm.input), so onData fires exclusively for these emulator-generated
+  // replies, not for keystroke echo.
+  const replyDisposable = xterm.onData((reply: string) => {
+    if (!isAlive) return;
+    try {
+      ptyProcess.write(reply);
+    } catch {
+      // PTY may be mid-teardown; dropping a late reply is harmless.
+    }
+  });
 
   ptyProcess.onExit(() => {
     isAlive = false;
@@ -242,10 +394,78 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
       return { text: lines.join("\n"), topOffset };
     },
 
+    getScreenCells(trim = true): { rows: RenderCell[][]; topOffset: number } | null {
+      const buffer = xterm.buffer.active;
+      const start = buffer.baseY;
+      const end = buffer.baseY + rows;
+      const cellObj = (buffer as any).getNullCell ? (buffer as any).getNullCell() : undefined;
+
+      const fgSpec = (c: any): CellColorSpec =>
+        c.isFgRGB()
+          ? { mode: "rgb", value: c.getFgColor() }
+          : c.isFgPalette()
+            ? { mode: "palette", index: c.getFgColor() }
+            : { mode: "default" };
+      const bgSpec = (c: any): CellColorSpec =>
+        c.isBgRGB()
+          ? { mode: "rgb", value: c.getBgColor() }
+          : c.isBgPalette()
+            ? { mode: "palette", index: c.getBgColor() }
+            : { mode: "default" };
+
+      const allRows: RenderCell[][] = [];
+      for (let i = start; i < end; i++) {
+        const bufLine = buffer.getLine(i);
+        const row: RenderCell[] = [];
+        if (bufLine) {
+          for (let x = 0; x < bufLine.length; x++) {
+            const c = cellObj ? (bufLine.getCell(x, cellObj), cellObj) : bufLine.getCell(x);
+            if (!c) continue;
+            const w = c.getWidth();
+            if (w === 0) continue; // continuation half of a wide char — skip
+            // getChars() returns the full grapheme (base + combining/VS16), so
+            // emoji like "☑️" survive intact and render as one glyph.
+            row.push({
+              chars: c.getChars() || " ",
+              width: w,
+              fg: fgSpec(c),
+              bg: bgSpec(c),
+              bold: c.isBold(),
+            });
+          }
+        }
+        allRows.push(row);
+      }
+
+      // Trim trailing then leading blank rows (mirrors readScreen) so the PNG
+      // isn't padded with empty space. topOffset lets callers map cursor rows.
+      // Skipped when trim=false so the live viewer renders the full, fixed
+      // viewport and its window doesn't grow row by row as output appears.
+      if (!trim) return { rows: allRows, topOffset: 0 };
+      const isBlank = (row: RenderCell[]): boolean =>
+        row.every((cell) => (cell.chars === " " || cell.chars === "") && cell.bg.mode === "default");
+      while (allRows.length > 0 && isBlank(allRows[allRows.length - 1]!)) allRows.pop();
+      let topOffset = 0;
+      while (allRows.length > 0 && isBlank(allRows[0]!)) {
+        allRows.shift();
+        topOffset++;
+      }
+      return { rows: allRows, topOffset };
+    },
+
     getCursorPosition(): { col: number; row: number } | null {
       const buf = xterm.buffer.active;
       // xterm cursor is 0-indexed; return 1-indexed to match SGR mouse protocol
       return { col: buf.cursorX + 1, row: buf.baseY + buf.cursorY + 1 };
+    },
+
+    stringCellWidth(s: string): number {
+      try {
+        return (xterm as any)._core.unicodeService.getStringCellWidth(s);
+      } catch {
+        // Fallback: count Unicode code points (better than UTF-16 units).
+        return Array.from(s).length;
+      }
     },
 
     isCursorHidden(): boolean {
@@ -265,6 +485,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
     resize(newCols: number, newRows: number) {
       ptyProcess.resize(newCols, newRows);
       xterm.resize(newCols, newRows);
+      if (viewerSocket) scheduleViewerFrame();
     },
 
     kill(signal?: string) {
@@ -273,6 +494,8 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
 
     dispose() {
       if (isAlive) { ptyProcess.kill(); isAlive = false; }
+      if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+      replyDisposable.dispose();
       viewerSocket?.close();
       xterm.dispose();
     },
@@ -283,6 +506,9 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   const startupScreen = wrapper.readScreen().text;
   promptPattern = detectPromptPattern(startupScreen);
   wrapper.promptPattern = promptPattern;
+  // Render an initial frame so a viewer connecting right after launch sees the
+  // startup screen immediately, before any further PTY output arrives.
+  if (viewerSocket) scheduleViewerFrame();
   return wrapper;
 }
 
@@ -448,6 +674,16 @@ export async function createPipeTerminal(options: TerminalOptions): Promise<Term
 
       getCursorPosition(): { col: number; row: number } | null {
         return null; // Not available in pipe mode
+      },
+
+      stringCellWidth(s: string): number {
+        // No emulator in pipe mode; approximate by code-point count. Screenshots
+        // aren't supported in pipe mode anyway, so this is only a safe default.
+        return Array.from(s).length;
+      },
+
+      getScreenCells(_trim = true): { rows: RenderCell[][]; topOffset: number } | null {
+        return null; // No grid in pipe mode; screenshots require PTY mode.
       },
 
       isCursorHidden(): boolean {

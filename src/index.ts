@@ -245,7 +245,7 @@ function createServer(cfg?: ServerConfig) {
 
   server.tool(
     "screenshot_session",
-    "Capture the Terminal Viewer window as a PNG image. Returns the image as base64-encoded PNG data. The viewer must be running for this session (create with viewer: true). On macOS, briefly brings the viewer to front for the capture.",
+    "Render the session's current terminal screen to a PNG image, returned as base64-encoded PNG data. Renders directly from the emulator grid with skia-canvas (color emoji, wide-glyph overflow, full font fallback) — no viewer window required, works headlessly. Only available in PTY mode.",
     screenshotSessionSchema.shape,
     { title: "Screenshot Session", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ session_id }) => {
