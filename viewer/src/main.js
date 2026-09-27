@@ -29,11 +29,44 @@ function signalReadyOnce() {
   if (readySignaled) return;
   readySignaled = true;
   emit("viewer-ready");
-  // The first frame is decoded while the window is still hidden (Rust hides it
-  // on setup and only shows it on this event), and WKWebView does not repaint
-  // an already-loaded <img> when the window is later shown. Re-apply the frame
-  // shortly after so the freshly-shown window actually paints it.
-  setTimeout(repaint, 150);
+  // The first frame is decoded/sized while the window is still hidden (Rust
+  // hides it on setup and only shows it on this event). Two things need a
+  // post-show pass: WKWebView does not repaint an already-loaded <img> when the
+  // window is later shown, and innerSize()/outerSize() only report reliable
+  // values once the window is realized — so re-apply both the frame and the
+  // window sizing now that it's visible.
+  setTimeout(() => {
+    repaint();
+    if (lastW && lastH) void sizeWindow(lastW, lastH);
+  }, 150);
+}
+
+// macOS standard title-bar height in logical px. Used as the fallback height
+// allowance when the live inner-size measurement is unavailable/unreliable.
+const MACOS_TITLEBAR_LOGICAL = 28;
+
+// Size the window so its CONTENT area is exactly w×h logical px. setSize sets
+// the OUTER size (frame + title bar/borders), so sizing it to the frame leaves
+// the content short by the title-bar height and clips the bottom terminal
+// row(s). We set the frame size, measure the content deficit, and grow the
+// window by it. innerSize() is unreliable in some states (it can report the
+// outer size), so when the measurement shows no deficit we fall back to the
+// known macOS title-bar allowance. The CSS object-fit safety net absorbs any
+// residual mismatch without ever clipping.
+async function sizeWindow(w, h) {
+  try {
+    const win = getCurrentWindow();
+    await win.setResizable(true);
+    await win.setSize(new LogicalSize(w, h));
+    let deficit = MACOS_TITLEBAR_LOGICAL;
+    try {
+      const [inner, scale] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+      const measured = h - inner.height / scale;
+      if (measured > 0.5) deficit = measured;
+    } catch {}
+    await win.setSize(new LogicalSize(w, h + deficit));
+    await win.setResizable(false);
+  } catch {}
 }
 
 async function showFrame(base64) {
@@ -44,20 +77,16 @@ async function showFrame(base64) {
   const url = URL.createObjectURL(blob);
 
   img.onload = async () => {
-    // The PNG is 2x; display and size the window at logical (÷2) dimensions.
+    // The PNG is 2x; the window is sized at logical (÷2) dimensions. The <img>
+    // itself fills the window via CSS (width/height 100% + object-fit), so we
+    // don't set explicit pixel dimensions here.
     const w = Math.round(img.naturalWidth / 2);
     const h = Math.round(img.naturalHeight / 2);
-    img.style.width = w + "px";
-    img.style.height = h + "px";
 
     if (w !== lastW || h !== lastH) {
       lastW = w;
       lastH = h;
-      try {
-        const win = getCurrentWindow();
-        await win.setSize(new LogicalSize(w, h));
-        await win.setResizable(false);
-      } catch {}
+      await sizeWindow(w, h);
     }
 
     // Free the previous frame's Blob URL now that the new one is displayed.
