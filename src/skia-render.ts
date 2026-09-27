@@ -113,9 +113,15 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
   // the variation sequence resolve to the color glyph. (Terminals like Ghostty
   // pick the emoji font here via CoreText; this matches that.)
   const families = fontFamily.split(",").map((s) => s.trim()).filter(Boolean);
+  // Put emoji families first, then the bundled EmojiFallback color font (so a
+  // default Menlo-only stack still resolves VS16 color glyphs), then the mono
+  // families. Dedupe in case the caller already named EmojiFallback.
+  const userEmojiFamilies = families.filter((f) => /emoji/i.test(f));
+  const monoFamilies = families.filter((f) => !/emoji/i.test(f));
   const emojiFirstFamily = [
-    ...families.filter((f) => /emoji/i.test(f)),
-    ...families.filter((f) => !/emoji/i.test(f)),
+    ...userEmojiFamilies,
+    ...(userEmojiFamilies.some((f) => f === "EmojiFallback") ? [] : ["EmojiFallback"]),
+    ...monoFamilies,
   ].join(", ");
   const cellWidth = 7.22 * scale;
   const cellHeight = 15 * scale;

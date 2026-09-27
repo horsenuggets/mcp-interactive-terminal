@@ -90,6 +90,12 @@ export interface TerminalOptions {
   rows?: number;
   /** Enable the viewer socket for this session. */
   viewer?: boolean;
+  /** Absolute paths to font files registered for this session's rendering
+   *  (screenshots and live viewer frames). */
+  screenshotFonts?: string[];
+  /** Font family (or CSS-style comma-separated stack) used to render this
+   *  session's screenshots and live viewer frames. */
+  screenshotFontFamily?: string;
 }
 
 /**
@@ -161,14 +167,19 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   const sessionId = Math.random().toString(36).slice(2, 10);
   const viewerSocket = viewerEnabled ? createViewerSocket(sessionId) : null;
 
-  // Font config for the live viewer's skia frames. Reads the same env channel
-  // the screenshot tool uses (some MCP clients drop new tool args but always
-  // forward `env`), so the viewer and screenshots render with identical fonts.
-  const viewerFontsRaw = options.env?.MCP_TERMINAL_SCREENSHOT_FONTS;
-  const viewerFonts = viewerFontsRaw
-    ? viewerFontsRaw.split(",").map((s) => s.trim()).filter(Boolean)
-    : undefined;
-  const viewerFontFamily = options.env?.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY;
+  // Font config for the live viewer's skia frames. Resolves from explicit
+  // per-session options first, then the same env channel the screenshot tool
+  // uses (some MCP clients drop new tool args but always forward `env`). This
+  // matches SessionManager's precedence exactly so the viewer and screenshots
+  // always render with identical fonts, whichever channel supplied them.
+  const viewerEnvFontsRaw = options.env?.MCP_TERMINAL_SCREENSHOT_FONTS;
+  const viewerFonts =
+    options.screenshotFonts ??
+    (viewerEnvFontsRaw
+      ? viewerEnvFontsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined);
+  const viewerFontFamily =
+    options.screenshotFontFamily ?? options.env?.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY;
 
   // Debounced skia frame renderer for the viewer. skia-canvas is a native
   // module loaded on first render and cached; if it can't load we simply stop

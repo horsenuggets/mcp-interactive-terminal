@@ -47,22 +47,56 @@ export function createViewerSocket(sessionId: string): ViewerSocket {
   const clients = new Set<Socket>();
   let latestFrame: Buffer | null = null;
 
+  // Per-client backpressure state. While a socket's write buffer is full we hold
+  // back new frames and stash only the newest one, then flush it on 'drain'.
+  // This keeps a slow/backgrounded viewer from accumulating one large encoded
+  // frame per render in the writable queue (unbounded memory + latency); it just
+  // skips ahead to the current screen once it drains.
+  const backpressured = new WeakSet<Socket>();
+  const pending = new WeakMap<Socket, Buffer>();
+
+  // Send a frame to one client, honoring backpressure. Returns false and stashes
+  // the frame (superseding any earlier stash) when the socket can't keep up.
+  const sendToClient = (client: Socket, png: Buffer): boolean => {
+    if (backpressured.has(client)) {
+      pending.set(client, png);
+      return false;
+    }
+    try {
+      const ok = client.write(frameWithHeader(png));
+      if (!ok) backpressured.add(client);
+      return ok;
+    } catch {
+      clients.delete(client);
+      return false;
+    }
+  };
+
   const server: Server = createServer((socket) => {
     clients.add(socket);
     console.error(`[mcp-terminal] viewer connected to session ${sessionId}`);
 
     // Replay the latest rendered frame so the viewer catches up immediately.
-    if (latestFrame) {
-      try { socket.write(frameWithHeader(latestFrame)); } catch {}
-    }
+    if (latestFrame) sendToClient(socket, latestFrame);
+
+    socket.on("drain", () => {
+      backpressured.delete(socket);
+      const stashed = pending.get(socket);
+      if (stashed) {
+        pending.delete(socket);
+        sendToClient(socket, stashed);
+      }
+    });
 
     socket.on("close", () => {
       clients.delete(socket);
+      pending.delete(socket);
       console.error(`[mcp-terminal] viewer disconnected from session ${sessionId}`);
     });
 
     socket.on("error", () => {
       clients.delete(socket);
+      pending.delete(socket);
     });
   });
 
@@ -79,13 +113,8 @@ export function createViewerSocket(sessionId: string): ViewerSocket {
 
     writeFrame(png: Buffer) {
       latestFrame = png;
-      const framed = frameWithHeader(png);
       for (const client of clients) {
-        try {
-          client.write(framed);
-        } catch {
-          clients.delete(client);
-        }
+        sendToClient(client, png);
       }
     },
 

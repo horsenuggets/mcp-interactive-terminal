@@ -47,6 +47,17 @@ async fn stream_pty_data(app: AppHandle, socket_path: String, latest: LatestFram
         }
         let len = u32::from_be_bytes(header) as usize;
 
+        // Guard against a malformed/hostile local client sending a bogus length
+        // that would trigger a huge allocation before any payload is validated.
+        // A full-viewport PNG is well under this cap; anything outside the range
+        // is treated as a protocol violation and closes the connection.
+        const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+        if len == 0 || len > MAX_FRAME_BYTES {
+            let _ = app.emit("pty-error", format!("Invalid frame length: {}", len));
+            app.exit(1);
+            break;
+        }
+
         // Read the PNG payload.
         let mut payload = vec![0u8; len];
         match stream.read_exact(&mut payload).await {

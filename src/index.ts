@@ -63,10 +63,10 @@ function createServer(cfg?: ServerConfig) {
     "Spawn an interactive terminal session (REPL, shell, database client, SSH, etc.). Returns a session_id for subsequent commands.",
     createSessionSchema.shape,
     { title: "Create Session", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    async ({ command, args, name, cwd, env, cols, rows, timeout_seconds, viewer }) => {
+    async ({ command, args, name, cwd, env, cols, rows, timeout_seconds, viewer, fonts, font_family }) => {
       try {
         const result = await handleCreateSession(
-          { command, args, name, cwd, env, cols, rows, timeout_seconds, viewer },
+          { command, args, name, cwd, env, cols, rows, timeout_seconds, viewer, fonts, font_family },
           sessionManager,
           config,
         );
