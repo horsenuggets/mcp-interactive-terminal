@@ -172,14 +172,17 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   // uses (some MCP clients drop new tool args but always forward `env`). This
   // matches SessionManager's precedence exactly so the viewer and screenshots
   // always render with identical fonts, whichever channel supplied them.
-  const viewerEnvFontsRaw = options.env?.MCP_TERMINAL_SCREENSHOT_FONTS;
+  const viewerEnvFontsRaw =
+    options.env?.MCP_TERMINAL_SCREENSHOT_FONTS ?? process.env.MCP_TERMINAL_SCREENSHOT_FONTS;
   const viewerFonts =
     options.screenshotFonts ??
     (viewerEnvFontsRaw
       ? viewerEnvFontsRaw.split(",").map((s) => s.trim()).filter(Boolean)
       : undefined);
   const viewerFontFamily =
-    options.screenshotFontFamily ?? options.env?.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY;
+    options.screenshotFontFamily ??
+    options.env?.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY ??
+    process.env.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY;
 
   // Debounced skia frame renderer for the viewer. skia-canvas is a native
   // module loaded on first render and cached; if it can't load we simply stop
@@ -189,9 +192,14 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
   let renderInFlight = false;
   let renderPending = false;
+  // `wrapper` (read by renderScreenToPng) is a const declared further down, so
+  // it lives in the temporal dead zone until then. The onData handler is wired
+  // before that point, so guard renders until the wrapper exists to avoid a
+  // ReferenceError from an early frame scheduled during construction.
+  let wrapperReady = false;
 
   async function renderViewerFrameNow(): Promise<void> {
-    if (!viewerSocket || skiaUnavailable) return;
+    if (!viewerSocket || skiaUnavailable || !wrapperReady) return;
     if (renderInFlight) { renderPending = true; return; }
     renderInFlight = true;
     try {
@@ -511,6 +519,9 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
       xterm.dispose();
     },
   };
+  // The wrapper now exists, so viewer frames scheduled during construction can
+  // safely render.
+  wrapperReady = true;
 
   // Wait for startup output to detect prompt
   await new Promise((r) => setTimeout(r, 1000));

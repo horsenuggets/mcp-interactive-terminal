@@ -51,17 +51,21 @@ export class SessionManager {
     const id = randomUUID().slice(0, 8);
     const ttlSeconds = options.timeoutSeconds ?? 300;
 
-    // Screenshot font config resolves from explicit args first, then from the
-    // session env (MCP_TERMINAL_SCREENSHOT_FONTS / _FONT_FAMILY). The env path
-    // exists because some MCP clients validate tool calls against a cached
+    // Screenshot font config resolves from explicit args first, then the session
+    // env, then the server process env (MCP_TERMINAL_SCREENSHOT_FONTS /
+    // _FONT_FAMILY), mirroring the Unicode-version precedence below. The env
+    // paths exist because some MCP clients validate tool calls against a cached
     // schema and silently drop args they haven't refreshed — but `env` is a
     // long-standing param they always forward, so it's a reliable channel.
-    const envFontsRaw = options.env?.MCP_TERMINAL_SCREENSHOT_FONTS;
+    const envFontsRaw =
+      options.env?.MCP_TERMINAL_SCREENSHOT_FONTS ?? process.env.MCP_TERMINAL_SCREENSHOT_FONTS;
     const screenshotFonts =
       options.screenshotFonts ??
       (envFontsRaw ? envFontsRaw.split(",").map((s) => s.trim()).filter(Boolean) : undefined);
     const screenshotFontFamily =
-      options.screenshotFontFamily ?? options.env?.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY;
+      options.screenshotFontFamily ??
+      options.env?.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY ??
+      process.env.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY;
     const session: Session = {
       id,
       name: options.name ?? `${options.command}-${id}`,
