@@ -83,6 +83,7 @@ export class SessionManager {
       screenshotFonts,
       screenshotFontFamily,
       unicodeVersion:
+        options.unicodeVersion ??
         options.env?.MCP_TERMINAL_UNICODE_VERSION ??
         process.env.MCP_TERMINAL_UNICODE_VERSION ??
         "15-graphemes",

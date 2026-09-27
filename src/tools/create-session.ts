@@ -24,6 +24,7 @@ export const createSessionSchema = z.object({
   viewer: z.boolean().optional().default(false).describe("Enable visual viewer socket for this session"),
   fonts: z.array(z.string()).optional().describe("Absolute paths to font files (.ttf/.otf) to register for this session's screenshots. Register a custom terminal font here (e.g. a patch/emoji font) so screenshot_session renders its glyphs. Pair with font_family to actually select them."),
   font_family: z.string().optional().describe("Font family, or CSS-style comma-separated stack, used to render this session's screenshots (e.g. \"'My Mono', 'My Mono Emoji', Menlo\"). Families must be installed system-wide or supplied via the fonts arg. Defaults to the renderer's built-in monospace font."),
+  unicode_version: z.enum(["15-graphemes", "15", "6", "legacy"]).optional().describe("Unicode width table/version for this session's terminal emulation. Use this to match host terminal behavior for wide/emoji glyph cell widths. Defaults to 15-graphemes."),
 });
 
 export type CreateSessionArgs = z.infer<typeof createSessionSchema>;
@@ -49,6 +50,7 @@ export async function handleCreateSession(
     viewer: args.viewer,
     screenshotFonts: args.fonts,
     screenshotFontFamily: args.font_family,
+    unicodeVersion: args.unicode_version,
   });
 
   audit("session_create", session.id, {

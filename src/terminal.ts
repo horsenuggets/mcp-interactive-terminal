@@ -88,6 +88,8 @@ export interface TerminalOptions {
   env?: Record<string, string>;
   cols?: number;
   rows?: number;
+  /** xterm Unicode width table/version ("15-graphemes", "15", "6", "legacy"). */
+  unicodeVersion?: string;
   /** Enable the viewer socket for this session. */
   viewer?: boolean;
   /** Absolute paths to font files registered for this session's rendering
@@ -131,6 +133,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   // macOS `wcwidth` / Ghostty `grapheme-width-method = legacy`, where
   // Emoji_Presentation glyphs are 2 cells but VS16 emoji (e.g. `☑️`) stay 1.
   const unicodeVersion =
+    options.unicodeVersion ??
     options.env?.MCP_TERMINAL_UNICODE_VERSION ??
     process.env.MCP_TERMINAL_UNICODE_VERSION ??
     "15-graphemes";
@@ -328,7 +331,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
         if (fullScreen) {
           return { start: -buffer.viewportY, end: buffer.length };
         }
-        return { start: buffer.baseY, end: buffer.baseY + rows };
+        return { start: buffer.baseY, end: buffer.baseY + xterm.rows };
       };
 
       const { start, end } = getRows();
@@ -416,7 +419,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
     getScreenCells(trim = true): { rows: RenderCell[][]; topOffset: number } | null {
       const buffer = xterm.buffer.active;
       const start = buffer.baseY;
-      const end = buffer.baseY + rows;
+      const end = buffer.baseY + xterm.rows;
       const cellObj = (buffer as any).getNullCell ? (buffer as any).getNullCell() : undefined;
 
       const fgSpec = (c: any): CellColorSpec =>
