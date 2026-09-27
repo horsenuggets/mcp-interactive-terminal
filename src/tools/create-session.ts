@@ -1,6 +1,15 @@
 import { z } from "zod";
 import type { SessionManager } from "../session-manager.js";
-import type { ServerConfig, CreateSessionOutput } from "../types.js";
+import {
+  DEFAULT_COLS,
+  DEFAULT_ROWS,
+  MAX_COLS,
+  MAX_ROWS,
+  MIN_COLS,
+  MIN_ROWS,
+  type ServerConfig,
+  type CreateSessionOutput,
+} from "../types.js";
 import { audit } from "../utils/audit-logger.js";
 
 export const createSessionSchema = z.object({
@@ -9,10 +18,12 @@ export const createSessionSchema = z.object({
   name: z.string().optional().describe("Human-readable session name"),
   cwd: z.string().optional().describe("Working directory for the session"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
-  cols: z.number().min(40).max(300).optional().default(120).describe("Terminal width in columns"),
-  rows: z.number().min(10).max(100).optional().default(40).describe("Terminal height in rows"),
+  cols: z.number().min(MIN_COLS).max(MAX_COLS).optional().default(DEFAULT_COLS).describe("Terminal width in columns"),
+  rows: z.number().min(MIN_ROWS).max(MAX_ROWS).optional().default(DEFAULT_ROWS).describe("Terminal height in rows"),
   timeout_seconds: z.number().min(1).max(21600).optional().default(300).describe("Session auto-timeout in seconds. The session process will be killed (SIGKILL) when this expires. Uses wall-clock time so it survives sleep/wake cycles. Default: 300 (5 minutes). Maximum: 21600 (6 hours)."),
   viewer: z.boolean().optional().default(false).describe("Enable visual viewer socket for this session"),
+  fonts: z.array(z.string()).optional().describe("Absolute paths to font files (.ttf/.otf) to register for this session's screenshots. Register a custom terminal font here (e.g. a patch/emoji font) so screenshot_session renders its glyphs. Pair with font_family to actually select them."),
+  font_family: z.string().optional().describe("Font family, or CSS-style comma-separated stack, used to render this session's screenshots (e.g. \"'My Mono', 'My Mono Emoji', Menlo\"). Families must be installed system-wide or supplied via the fonts arg. Defaults to the renderer's built-in monospace font."),
 });
 
 export type CreateSessionArgs = z.infer<typeof createSessionSchema>;
@@ -36,6 +47,8 @@ export async function handleCreateSession(
     rows: args.rows,
     timeoutSeconds: args.timeout_seconds,
     viewer: args.viewer,
+    screenshotFonts: args.fonts,
+    screenshotFontFamily: args.font_family,
   });
 
   audit("session_create", session.id, {

@@ -1,5 +1,17 @@
 import type { ChildProcess } from "node:child_process";
 
+// --- Terminal dimensions ---
+
+/** Default and allowed bounds for a session's terminal grid, shared by the
+ *  create_session schema, the session manager, and the terminal wrapper so the
+ *  defaults can't drift between them. */
+export const DEFAULT_COLS = 120;
+export const DEFAULT_ROWS = 30;
+export const MIN_COLS = 40;
+export const MAX_COLS = 300;
+export const MIN_ROWS = 10;
+export const MAX_ROWS = 100;
+
 // --- Configuration ---
 
 export interface ServerConfig {
@@ -60,6 +72,15 @@ export interface Session {
   isAlive: boolean;
   terminal: TerminalWrapper;
   pendingDangerousCommands: Set<string>;
+  /** Absolute paths to font files registered for this session's screenshots. */
+  screenshotFonts?: string[];
+  /** Font family (or CSS-style comma-separated stack) used to render this
+   *  session's screenshots. Falls back to the renderer default when unset. */
+  screenshotFontFamily?: string;
+  /** Active xterm Unicode width version for this session ("15-graphemes",
+   *  "15", "6", or "legacy"). Passed to the live viewer so it measures widths
+   *  the same way the emulator grid (and screenshots) do. */
+  unicodeVersion?: string;
 }
 
 export interface SessionInfo {
@@ -69,6 +90,23 @@ export interface SessionInfo {
   pid: number;
   is_alive: boolean;
   created_at: string;
+}
+
+// --- Screen rendering ---
+
+/** A terminal color as the emulator stores it, resolved by the renderer. */
+export type CellColorSpec =
+  | { mode: "default" }
+  | { mode: "palette"; index: number }
+  | { mode: "rgb"; value: number };
+
+/** A single rendered grid cell: the emulator's own char, width and style. */
+export interface RenderCell {
+  chars: string;
+  width: number; // 1 or 2 grid columns
+  fg: CellColorSpec;
+  bg: CellColorSpec;
+  bold: boolean;
 }
 
 // --- Terminal Wrapper ---
@@ -85,6 +123,21 @@ export interface TerminalWrapper {
   readScreen(fullScreen?: boolean, rawAnsi?: boolean): { text: string; topOffset: number };
   /** Get the cursor position as {col, row} (1-indexed). Returns null in pipe mode. */
   getCursorPosition(): { col: number; row: number } | null;
+  /** Number of terminal cells a string occupies, per the emulator's active
+   *  Unicode width tables (grapheme-cluster aware in PTY mode). Used so the
+   *  screenshot renderer places glyphs on the same grid the emulator uses. */
+  stringCellWidth(s: string): number;
+  /** Structured view of the visible screen for faithful rendering: each cell
+   *  carries the emulator's own char + width + style, so the renderer draws
+   *  exactly what the grid holds (no string round-trip / width recompute).
+   *  Cells of width 0 (wide-char continuations) are omitted. Returns null in
+   *  pipe mode.
+   *
+   *  When `trim` is true (default) leading/trailing blank rows are removed and
+   *  the count reported via `topOffset` — used by screenshots for a tight image.
+   *  When false, the full `rows`-high viewport is returned (topOffset 0) so the
+   *  live viewer keeps a stable window size instead of growing line by line. */
+  getScreenCells(trim?: boolean): { rows: RenderCell[][]; topOffset: number } | null;
   /** Check if the cursor is hidden via DECTCEM (\x1b[?25l). Only available in PTY mode. */
   isCursorHidden(): boolean;
   /** Get the last cursor position where DECTCEM was visible. Captures the

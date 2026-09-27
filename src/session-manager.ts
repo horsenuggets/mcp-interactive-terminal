@@ -6,7 +6,13 @@
 import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import { createTerminal, type TerminalOptions } from "./terminal.js";
-import type { Session, SessionInfo, ServerConfig } from "./types.js";
+import {
+  DEFAULT_COLS,
+  DEFAULT_ROWS,
+  type Session,
+  type SessionInfo,
+  type ServerConfig,
+} from "./types.js";
 import { audit } from "./utils/audit-logger.js";
 
 export class SessionManager {
@@ -20,7 +26,14 @@ export class SessionManager {
     return this.sessions.size;
   }
 
-  async createSession(options: TerminalOptions & { name?: string; timeoutSeconds?: number }): Promise<Session> {
+  async createSession(
+    options: TerminalOptions & {
+      name?: string;
+      timeoutSeconds?: number;
+      screenshotFonts?: string[];
+      screenshotFontFamily?: string;
+    },
+  ): Promise<Session> {
     // Check limits
     if (this.sessions.size >= this.config.maxSessions) {
       throw new Error(
@@ -37,20 +50,38 @@ export class SessionManager {
     const terminal = await createTerminal(options);
     const id = randomUUID().slice(0, 8);
     const ttlSeconds = options.timeoutSeconds ?? 300;
+
+    // Screenshot font config resolves from explicit args first, then from the
+    // session env (MCP_TERMINAL_SCREENSHOT_FONTS / _FONT_FAMILY). The env path
+    // exists because some MCP clients validate tool calls against a cached
+    // schema and silently drop args they haven't refreshed — but `env` is a
+    // long-standing param they always forward, so it's a reliable channel.
+    const envFontsRaw = options.env?.MCP_TERMINAL_SCREENSHOT_FONTS;
+    const screenshotFonts =
+      options.screenshotFonts ??
+      (envFontsRaw ? envFontsRaw.split(",").map((s) => s.trim()).filter(Boolean) : undefined);
+    const screenshotFontFamily =
+      options.screenshotFontFamily ?? options.env?.MCP_TERMINAL_SCREENSHOT_FONT_FAMILY;
     const session: Session = {
       id,
       name: options.name ?? `${options.command}-${id}`,
       command: options.command,
       args: options.args ?? [],
       pid: terminal.pid,
-      cols: options.cols ?? 120,
-      rows: options.rows ?? 40,
+      cols: options.cols ?? DEFAULT_COLS,
+      rows: options.rows ?? DEFAULT_ROWS,
       createdAt: new Date(),
       lastActivity: new Date(),
       deadlineMs: Date.now() + ttlSeconds * 1000,
       isAlive: true,
       terminal,
       pendingDangerousCommands: new Set(),
+      screenshotFonts,
+      screenshotFontFamily,
+      unicodeVersion:
+        options.env?.MCP_TERMINAL_UNICODE_VERSION ??
+        process.env.MCP_TERMINAL_UNICODE_VERSION ??
+        "15-graphemes",
     };
 
     this.sessions.set(id, session);
