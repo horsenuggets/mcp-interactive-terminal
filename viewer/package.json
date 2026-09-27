@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "esbuild src/main.js --bundle --format=esm --outfile=dist/main.js && cp src/index.html src/viewer.css dist/ && cp node_modules/@xterm/xterm/css/xterm.css dist/",
+    "build": "esbuild src/main.js --bundle --format=esm --outfile=dist/main.js && cp src/index.html src/viewer.css dist/",
     "tauri:build": "cd src-tauri && cargo tauri build && bash scripts/rename-bundle-executable.sh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -13,9 +13,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0"
+    "@tauri-apps/api": "^2.10.1"
   },
   "devDependencies": {
     "esbuild": "^0.28.0"

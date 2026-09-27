@@ -63,10 +63,23 @@ function createServer(cfg?: ServerConfig) {
     "Spawn an interactive terminal session (REPL, shell, database client, SSH, etc.). Returns a session_id for subsequent commands.",
     createSessionSchema.shape,
     { title: "Create Session", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    async ({ command, args, name, cwd, env, cols, rows, timeout_seconds, viewer }) => {
+    async ({
+      command,
+      args,
+      name,
+      cwd,
+      env,
+      cols,
+      rows,
+      timeout_seconds,
+      viewer,
+      fonts,
+      font_family,
+      unicode_version,
+    }) => {
       try {
         const result = await handleCreateSession(
-          { command, args, name, cwd, env, cols, rows, timeout_seconds, viewer },
+          { command, args, name, cwd, env, cols, rows, timeout_seconds, viewer, fonts, font_family, unicode_version },
           sessionManager,
           config,
         );
@@ -245,7 +258,7 @@ function createServer(cfg?: ServerConfig) {
 
   server.tool(
     "screenshot_session",
-    "Capture the Terminal Viewer window as a PNG image. Returns the image as base64-encoded PNG data. The viewer must be running for this session (create with viewer: true). On macOS, briefly brings the viewer to front for the capture.",
+    "Render the session's current terminal screen to a PNG image, returned as base64-encoded PNG data. Renders directly from the emulator grid with skia-canvas (color emoji, wide-glyph overflow, full font fallback) — no viewer window required, works headlessly. Only available in PTY mode.",
     screenshotSessionSchema.shape,
     { title: "Screenshot Session", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ session_id }) => {

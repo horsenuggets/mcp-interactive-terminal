@@ -1,224 +1,96 @@
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import sharedTheme from "../../src/theme.json";
+// Live viewer front-end.
+//
+// The MCP renders each terminal frame to a PNG with skia-canvas — the exact
+// same `renderScreenToPng` that backs `screenshot_session` — and streams it
+// over the session's Unix socket. The Rust backend forwards each frame as a
+// base64 `png-frame` event. This front-end simply displays the latest frame in
+// an <img>, so the live viewer is pixel-identical to a screenshot. There is no
+// xterm.js re-render (which clipped wide glyphs, ignored sbix color fonts, and
+// mismatched cell metrics).
+//
+// The PNG is rendered at 2x (Retina) device pixels. We display the <img> at
+// half its natural size in CSS pixels and size the window to match, so on a
+// Retina display the frame maps 1:1 to physical pixels and stays crisp.
+
 const { listen, emit } = window.__TAURI__.event;
 const { getCurrentWindow, LogicalSize } = window.__TAURI__.window;
 
-// Build the xterm theme from the shared theme.json so the viewer and
-// the PNG screenshot tool render with identical colors (matching
-// Ghostty defaults).
-const ANSI_NAMES = [
-  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-  "brightBlack", "brightRed", "brightGreen", "brightYellow",
-  "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
-];
-const xtermTheme = {
-  background: sharedTheme.background,
-  foreground: sharedTheme.foreground,
-  cursor: sharedTheme.cursor,
-  selectionBackground: sharedTheme.selectionBackground,
-};
-ANSI_NAMES.forEach((name, i) => { xtermTheme[name] = sharedTheme.ansi16[i]; });
+const img = document.getElementById("frame");
 
-const term = new Terminal({
-  fontFamily: "Menlo, monospace",
-  fontSize: 12,
-  theme: xtermTheme,
-  drawBoldTextInBrightColors: false,
-  cursorBlink: false,
-  cursorStyle: "bar",
-  cursorInactiveStyle: "bar",
-  scrollback: 5000,
-  disableStdin: true,
-});
+let currentUrl = null;
+let readySignaled = false;
+let lastW = 0;
+let lastH = 0;
+// The most recent frame's base64, retained so we can force a repaint after the
+// window becomes visible (see repaint()).
+let lastBase64 = null;
 
-const fitAddon = new FitAddon();
-term.loadAddon(fitAddon);
-const container = document.getElementById("terminal");
-term.open(container);
-
-// Fix dim rendering: inject a style override after xterm initializes.
-// xterm.js dim uses 8-digit hex (#RRGGBBAA) with 50% alpha.
-// We override with opaque 60%-brightness colors to match Ghostty's dim rendering.
-{
-  const DIM_MULTIPLIER = 0.6;
-  const theme = term.options.theme || {};
-  const palette = [
-    theme.black, theme.red, theme.green, theme.yellow,
-    theme.blue, theme.magenta, theme.cyan, theme.white,
-    theme.brightBlack, theme.brightRed, theme.brightGreen, theme.brightYellow,
-    theme.brightBlue, theme.brightMagenta, theme.brightCyan, theme.brightWhite,
-  ];
-  let css = "";
-  const hex = (n) => Math.round(n).toString(16).padStart(2, "0");
-  for (let i = 0; i < palette.length; i++) {
-    const c = palette[i];
-    if (!c) continue;
-    const m = c.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-    if (!m) continue;
-    const r = parseInt(m[1], 16) * DIM_MULTIPLIER;
-    const g = parseInt(m[2], 16) * DIM_MULTIPLIER;
-    const b = parseInt(m[3], 16) * DIM_MULTIPLIER;
-    css += `.xterm .xterm-fg-${i}.xterm-dim{color:#${hex(r)}${hex(g)}${hex(b)} !important}\n`;
-  }
-  const fg = theme.foreground || "#f0f0f0";
-  const fgm = fg.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-  if (fgm) {
-    css += `.xterm .xterm-fg-257.xterm-dim{color:#${hex(parseInt(fgm[1],16)*DIM_MULTIPLIER)}${hex(parseInt(fgm[2],16)*DIM_MULTIPLIER)}${hex(parseInt(fgm[3],16)*DIM_MULTIPLIER)} !important}\n`;
-  }
-  if (css) {
-    const s = document.createElement("style");
-    s.textContent = css;
-    document.head.appendChild(s);
-  }
-}
-
-// Cursor visibility is controlled entirely by the PTY stream.
-// Interactive shells send DECTCEM show/hide as needed.
-
-async function resizeTerminalAndWindow(cols, rows) {
-  // Resize xterm.js to match the PTY dimensions
-  term.resize(cols, rows);
-
-  // Measure actual cell size and compute window dimensions
-  try {
-    const dims = term._core._renderService.dimensions;
-    const cellWidth = dims.css.cell.width;
-    const cellHeight = dims.css.cell.height;
-    const width = Math.ceil(cols * cellWidth) + 22;
-    const height = Math.ceil(rows * cellHeight) + 18 + 28;
-    const win = getCurrentWindow();
-    await win.setSize(new LogicalSize(width, height));
-    await win.setResizable(false);
-  } catch (e) {
-    fitAddon.fit();
-  }
+function signalReadyOnce() {
+  if (readySignaled) return;
+  readySignaled = true;
   emit("viewer-ready");
+  // The first frame is decoded while the window is still hidden (Rust hides it
+  // on setup and only shows it on this event), and WKWebView does not repaint
+  // an already-loaded <img> when the window is later shown. Re-apply the frame
+  // shortly after so the freshly-shown window actually paints it.
+  setTimeout(repaint, 150);
 }
 
-// Wait for terminal dimensions injected by Rust backend via eval()
-function waitForConfig() {
-  if (window.__TERMINAL_CONFIG__) {
-    const { cols, rows } = window.__TERMINAL_CONFIG__;
-    resizeTerminalAndWindow(cols, rows);
-  } else {
-    // Poll until the Rust eval() sets the config
-    let attempts = 0;
-    const poll = setInterval(() => {
-      attempts++;
-      if (window.__TERMINAL_CONFIG__) {
-        clearInterval(poll);
-        const { cols, rows } = window.__TERMINAL_CONFIG__;
-        resizeTerminalAndWindow(cols, rows);
-      } else if (attempts > 20) {
-        clearInterval(poll);
-        resizeTerminalAndWindow(80, 24);
-      }
-    }, 50);
-  }
-}
-waitForConfig();
+async function showFrame(base64) {
+  // Decode base64 → bytes → Blob URL. Blob URLs let the browser decode the PNG
+  // off the main path and avoid the length limits of data: URLs.
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: "image/png" });
+  const url = URL.createObjectURL(blob);
 
-// Keep terminal focused so cursor renders when the PTY shows it
-const textarea = term.textarea;
-if (textarea) textarea.focus();
+  img.onload = async () => {
+    // The PNG is 2x; display and size the window at logical (÷2) dimensions.
+    const w = Math.round(img.naturalWidth / 2);
+    const h = Math.round(img.naturalHeight / 2);
+    img.style.width = w + "px";
+    img.style.height = h + "px";
 
-// Block all user mouse interaction
-container.style.pointerEvents = "none";
-
-// Repaint when window becomes visible (WKWebView optimization)
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) term.refresh(0, term.rows - 1);
-});
-window.addEventListener("focus", () => {
-  term.refresh(0, term.rows - 1);
-});
-
-// Synthetic cursor element — always solid, positioned from xterm.js buffer
-const cursorEl = document.getElementById("synthetic-cursor");
-
-// Red outline indicator around the cursor cell — makes it obvious in screenshots
-const cursorOutline = document.createElement("div");
-cursorOutline.id = "cursor-outline";
-Object.assign(cursorOutline.style, {
-  position: "absolute",
-  border: "2px solid rgba(255, 70, 70, 0.5)",
-  borderRadius: "0",
-  pointerEvents: "none",
-  zIndex: "11",
-  display: "none",
-  boxSizing: "border-box",
-});
-document.body.appendChild(cursorOutline);
-
-// Track the last cursor position where DECTCEM was visible.
-// Apps like Ink rapidly show/hide — we capture the position at each show.
-let lastVisiblePos = null;
-
-function updateSyntheticCursor() {
-  const buf = term.buffer.active;
-  if (!cursorEl) return;
-
-  const isVisible = !(term._core?.coreService?.isCursorHidden ?? false);
-  if (isVisible) {
-    lastVisiblePos = { x: buf.cursorX, y: buf.cursorY };
-  }
-
-  // Hide cursor + outline when DECTCEM is off (click-to-blur, selection
-  // outside input box, etc). Track lastVisiblePos so the cursor returns
-  // to the right spot when re-shown.
-  if (!isVisible) {
-    cursorEl.style.display = "none";
-    cursorOutline.style.display = "none";
-    return;
-  }
-  const pos = { x: buf.cursorX, y: buf.cursorY };
-  if (!pos) {
-    cursorEl.style.display = "none";
-    cursorOutline.style.display = "none";
-    return;
-  }
-  try {
-    const dims = term._core._renderService.dimensions;
-    const cellW = dims.css.cell.width;
-    const cellH = dims.css.cell.height;
-    const x = 10 + pos.x * cellW; // 10px left padding
-    const y = 8 + pos.y * cellH; // 8px top padding
-    cursorEl.style.left = x + "px";
-    cursorEl.style.top = y + "px";
-    cursorEl.style.height = cellH + "px";
-    cursorEl.style.display = "block";
-
-    // Position the red outline centered around the cursor bar (2px wide).
-    // Uniform gap of 2px between bar and inner border edge, border is 2px,
-    // so total offset from bar edge = gap + border = 4px each side.
-    const barW = 2; // synthetic cursor width
-    const gap = 2; // space between bar and inner border edge
-    const bw = 2;  // border width
-    const m = gap + bw;
-    cursorOutline.style.left = (x - m) + "px";
-    cursorOutline.style.top = (y - m) + "px";
-    cursorOutline.style.width = (barW + m * 2) + "px";
-    cursorOutline.style.height = (cellH + m * 2) + "px";
-    cursorOutline.style.display = "block";
-  } catch {
-    cursorEl.style.display = "none";
-    cursorOutline.style.display = "none";
-  }
-}
-
-listen("pty-data", (event) => {
-  const bytes = Uint8Array.from(atob(event.payload), (c) => c.charCodeAt(0));
-  term.write(bytes, () => {
-    // Update last visible position from xterm buffer when cursor is visible
-    const isVisible = !(term._core?.coreService?.isCursorHidden ?? false);
-    if (isVisible) {
-      const buf = term.buffer.active;
-      lastVisiblePos = { x: buf.cursorX, y: buf.cursorY };
+    if (w !== lastW || h !== lastH) {
+      lastW = w;
+      lastH = h;
+      try {
+        const win = getCurrentWindow();
+        await win.setSize(new LogicalSize(w, h));
+        await win.setResizable(false);
+      } catch {}
     }
-    updateSyntheticCursor();
-  });
+
+    // Free the previous frame's Blob URL now that the new one is displayed.
+    if (currentUrl) URL.revokeObjectURL(currentUrl);
+    currentUrl = url;
+
+    signalReadyOnce();
+  };
+
+  img.src = url;
+}
+
+// Force the latest frame to repaint by rebuilding it from scratch. Used just
+// after the window is first shown, since a frame decoded while the window was
+// still hidden may not paint on its own.
+function repaint() {
+  if (lastBase64) void showFrame(lastBase64);
+}
+
+listen("png-frame", (event) => {
+  lastBase64 = event.payload;
+  void showFrame(event.payload);
 }).catch(() => {});
 
 listen("pty-closed", () => {}).catch(() => {});
 listen("pty-error", () => {}).catch(() => {});
+
+// Note: when the window is occluded/backgrounded WKWebView suspends this
+// WebContent process and drops the png-frame events it misses, so lastBase64
+// goes stale. The Rust side handles that by re-emitting the *current* frame on
+// window focus, which arrives as a normal png-frame once this process resumes —
+// so no stale-frame repaint is done here on focus/visibility.
+
+// Failsafe: if no frame arrives shortly after launch, reveal the window anyway
+// so it never stays permanently hidden waiting on a frame that never comes.
+setTimeout(signalReadyOnce, 2000);

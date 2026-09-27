@@ -1,10 +1,24 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use std::env;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Listener, Manager};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 
-async fn stream_pty_data(app: AppHandle, socket_path: String) {
+/// The most recent frame (base64 PNG), shared so it can be re-emitted when the
+/// window regains focus. WKWebView suspends the WebContent process while the
+/// window is occluded/backgrounded and drops `png-frame` events delivered
+/// during that time, so a backgrounded viewer goes stale. Re-emitting the
+/// latest frame on focus lets the (now-resumed) webview catch up to the current
+/// screen even though it missed the intervening events.
+type LatestFrame = Arc<Mutex<Option<String>>>;
+
+/// Connect to the session's viewer socket and forward rendered PNG frames to
+/// the webview. The MCP renders each frame with skia-canvas (identical to
+/// `screenshot_session`) and writes it as a 4-byte big-endian length header
+/// followed by that many PNG bytes. We read one full frame at a time and emit
+/// it base64-encoded as a `png-frame` event.
+async fn stream_pty_data(app: AppHandle, socket_path: String, latest: LatestFrame) {
     let mut stream = match UnixStream::connect(&socket_path).await {
         Ok(s) => s,
         Err(e) => {
@@ -15,17 +29,49 @@ async fn stream_pty_data(app: AppHandle, socket_path: String) {
 
     let _ = app.emit("pty-connected", &socket_path);
 
-    let mut buf = [0u8; 4096];
     loop {
-        match stream.read(&mut buf).await {
-            Ok(0) => {
+        // Read the 4-byte length header.
+        let mut header = [0u8; 4];
+        match stream.read_exact(&mut header).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 let _ = app.emit("pty-closed", ());
                 app.exit(0);
                 break;
             }
-            Ok(n) => {
-                let encoded = BASE64.encode(&buf[..n]);
-                let _ = app.emit("pty-data", encoded);
+            Err(e) => {
+                let _ = app.emit("pty-error", format!("Read error: {}", e));
+                app.exit(1);
+                break;
+            }
+        }
+        let len = u32::from_be_bytes(header) as usize;
+
+        // Guard against a malformed/hostile local client sending a bogus length
+        // that would trigger a huge allocation before any payload is validated.
+        // A full-viewport PNG is well under this cap; anything outside the range
+        // is treated as a protocol violation and closes the connection.
+        const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+        if len == 0 || len > MAX_FRAME_BYTES {
+            let _ = app.emit("pty-error", format!("Invalid frame length: {}", len));
+            app.exit(1);
+            break;
+        }
+
+        // Read the PNG payload.
+        let mut payload = vec![0u8; len];
+        match stream.read_exact(&mut payload).await {
+            Ok(_) => {
+                let encoded = BASE64.encode(&payload);
+                if let Ok(mut guard) = latest.lock() {
+                    *guard = Some(encoded.clone());
+                }
+                let _ = app.emit("png-frame", encoded);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                let _ = app.emit("pty-closed", ());
+                app.exit(0);
+                break;
             }
             Err(e) => {
                 let _ = app.emit("pty-error", format!("Read error: {}", e));
@@ -242,19 +288,6 @@ fn force_macos_menu_title(name: &str) {
     }
 }
 
-/// Parse a flag value like --cols=120 or --cols 120
-fn parse_flag(args: &[String], flag: &str) -> Option<String> {
-    for (i, arg) in args.iter().enumerate() {
-        if let Some(val) = arg.strip_prefix(&format!("{}=", flag)) {
-            return Some(val.to_string());
-        }
-        if arg == flag {
-            return args.get(i + 1).cloned();
-        }
-    }
-    None
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Bundled launches read the app name from CFBundleName (set by Tauri's
@@ -269,8 +302,6 @@ pub fn run() {
 
     let args: Vec<String> = env::args().collect();
     let foreground = args.iter().any(|a| a == "--foreground" || a == "-f");
-    let cols: u32 = parse_flag(&args, "--cols").and_then(|v| v.parse().ok()).unwrap_or(80);
-    let rows: u32 = parse_flag(&args, "--rows").and_then(|v| v.parse().ok()).unwrap_or(24);
     let socket_path = args.iter()
         .find(|a| !a.starts_with('-') && a.as_str() != args[0] && a.parse::<u32>().is_err())
         .cloned()
@@ -310,12 +341,10 @@ pub fn run() {
                 )?;
             }
 
-            // Inject terminal dimensions into the webview as a global variable
-            // and immediately hide the window. The window is created with
-            // `visible: true` in tauri.conf.json (see comment below) and we
-            // only ever want to display it once JS has measured the cell
-            // grid and resized to the right dimensions — so we hide it
-            // synchronously here, then show it again from the
+            // Hide the window immediately. It is created with `visible: true`
+            // in tauri.conf.json (see comment below) and we only want to display
+            // it once JS has received the first frame and sized the window to it
+            // — so we hide it synchronously here, then show it again from the
             // `viewer-ready` listener.
             //
             // Why `visible: true` + immediate `hide()` instead of the simpler
@@ -339,12 +368,29 @@ pub fn run() {
             // isSuspensionImminent=0` followed by
             // `WebPage::markLayersVolatile: Failed to mark all layers as
             // volatile, will retry in N ms`.
+            // Shared store of the latest frame, re-emitted when the window
+            // regains focus so a backgrounded viewer (whose WebContent process
+            // WKWebView suspended, dropping the frames it missed) catches up.
+            let latest: LatestFrame = Arc::new(Mutex::new(None));
+
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.eval(&format!(
-                    "window.__TERMINAL_CONFIG__ = {{ cols: {}, rows: {} }};",
-                    cols, rows
-                ));
                 let _ = window.hide();
+
+                // On focus, re-emit the latest frame. Events delivered while the
+                // window was occluded were dropped by the suspended WebContent
+                // process; this pushes the current frame to the now-resumed
+                // webview so it doesn't stay stuck on the last frame it painted.
+                let focus_handle = app.handle().clone();
+                let focus_latest = latest.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(true) = event {
+                        if let Ok(guard) = focus_latest.lock() {
+                            if let Some(frame) = guard.as_ref() {
+                                let _ = focus_handle.emit("png-frame", frame.clone());
+                            }
+                        }
+                    }
+                });
             }
 
             // Show window when JS signals ready (after resize).
@@ -369,9 +415,10 @@ pub fn run() {
 
             if let Some(path) = socket_path.clone() {
                 let handle = app.handle().clone();
+                let stream_latest = latest.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    stream_pty_data(handle, path).await;
+                    stream_pty_data(handle, path, stream_latest).await;
                 });
             }
 

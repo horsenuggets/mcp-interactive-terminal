@@ -61,11 +61,11 @@ export async function handleViewSession(
     );
   }
 
-  const viewerArgs = [
-    socketPath,
-    "--cols", String(session.cols),
-    "--rows", String(session.rows),
-  ];
+  // The viewer just displays PNG frames the MCP renders and streams over the
+  // socket (identical to screenshot_session), so it needs only the socket path.
+  // The window sizes itself to each frame; font/Unicode/dimension config all
+  // live on the MCP side where the rendering happens.
+  const viewerArgs = [socketPath];
   if (args.foreground) {
     viewerArgs.push("--foreground");
   }
