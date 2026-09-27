@@ -45,20 +45,24 @@ function signalReadyOnce() {
 // allowance when the live inner-size measurement is unavailable/unreliable.
 const MACOS_TITLEBAR_LOGICAL = 28;
 
+const IS_MACOS = /Mac|iP(hone|ad|od)/.test(navigator.userAgent || navigator.platform || "");
+
 // Size the window so its CONTENT area is exactly w×h logical px. setSize sets
 // the OUTER size (frame + title bar/borders), so sizing it to the frame leaves
-// the content short by the title-bar height and clips the bottom terminal
+// the content short by the decoration height and clips the bottom terminal
 // row(s). We set the frame size, measure the content deficit, and grow the
 // window by it. innerSize() is unreliable in some states (it can report the
 // outer size), so when the measurement shows no deficit we fall back to the
-// known macOS title-bar allowance. The CSS object-fit safety net absorbs any
-// residual mismatch without ever clipping.
+// known macOS title-bar allowance — but only on macOS, since that constant is
+// platform-specific and would open other platforms oversized. On non-macOS
+// with no reliable measurement we grow by nothing and let the CSS object-fit
+// safety net absorb any residual mismatch without ever clipping.
 async function sizeWindow(w, h) {
   try {
     const win = getCurrentWindow();
     await win.setResizable(true);
     await win.setSize(new LogicalSize(w, h));
-    let deficit = MACOS_TITLEBAR_LOGICAL;
+    let deficit = IS_MACOS ? MACOS_TITLEBAR_LOGICAL : 0;
     try {
       const [inner, scale] = await Promise.all([win.innerSize(), win.scaleFactor()]);
       const measured = h - inner.height / scale;
