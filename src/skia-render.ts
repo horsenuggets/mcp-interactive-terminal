@@ -41,6 +41,94 @@ function rgbToHex(r: number, g: number, b: number): string {
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
 
+// Which of the four cell quadrants each Block-Elements quadrant glyph fills,
+// ordered [upperLeft, upperRight, lowerLeft, lowerRight].
+const QUADRANTS: Record<number, [boolean, boolean, boolean, boolean]> = {
+  0x2596: [false, false, true, false], // ▖ lower left
+  0x2597: [false, false, false, true], // ▗ lower right
+  0x2598: [true, false, false, false], // ▘ upper left
+  0x2599: [true, false, true, true], //   ▙ upper-left + lower-left + lower-right
+  0x259a: [true, false, false, true], //  ▚ upper-left + lower-right
+  0x259b: [true, true, true, false], //   ▛ upper-left + upper-right + lower-left
+  0x259c: [true, true, false, true], //   ▜ upper-left + upper-right + lower-right
+  0x259d: [false, true, false, false], // ▝ upper right
+  0x259e: [false, true, true, false], //  ▞ upper-right + lower-left
+  0x259f: [false, true, true, true], //   ▟ upper-right + lower-left + lower-right
+};
+
+/**
+ * Draw a Block-Elements glyph (U+2580–U+259F) as filled rectangles snapped to
+ * the cell's integer pixel bounds, instead of letting skia's `fillText` paint
+ * the font glyph. The font draws each glyph inside its em box (fontSize tall),
+ * which is smaller than the terminal cell in both axes, so stacked/adjacent
+ * block cells leave thin seams — the "broken by horizontal/vertical lines" look
+ * on solid mascots and bars. Painting rects that fill the whole cell makes the
+ * cells tile seamlessly, matching how native terminals render these glyphs.
+ *
+ * `l`/`t`/`r`/`b` are the cell's already-rounded left/top/right/bottom pixel
+ * bounds. Callers round with the same formula for every cell, so a cell's right
+ * edge equals its neighbour's left edge exactly and no gap or overlap appears.
+ * Returns true if the codepoint was a block element and was painted.
+ */
+export function drawBlockElement(ctx: any, cp: number, l: number, t: number, r: number, b: number): boolean {
+  if (cp < 0x2580 || cp > 0x259f) return false;
+  const w = r - l;
+  const h = b - t;
+  const mx = Math.round((l + r) / 2);
+  const my = Math.round((t + b) / 2);
+  // Upper half.
+  if (cp === 0x2580) {
+    ctx.fillRect(l, t, w, my - t);
+    return true;
+  }
+  // Lower eighths through full block (U+2581 = 1/8 tall … U+2588 = full).
+  if (cp >= 0x2581 && cp <= 0x2588) {
+    const y = b - Math.round(((cp - 0x2580) / 8) * h);
+    ctx.fillRect(l, y, w, b - y);
+    return true;
+  }
+  // Left eighths (U+2589 = 7/8 wide … U+258F = 1/8 wide); U+258C is left half.
+  if (cp >= 0x2589 && cp <= 0x258f) {
+    const x = l + Math.round(((0x2590 - cp) / 8) * w);
+    ctx.fillRect(l, t, x - l, h);
+    return true;
+  }
+  // Right half.
+  if (cp === 0x2590) {
+    ctx.fillRect(mx, t, r - mx, h);
+    return true;
+  }
+  // Shades: fill the whole cell at reduced alpha (light/medium/dark).
+  if (cp >= 0x2591 && cp <= 0x2593) {
+    const prev = ctx.globalAlpha;
+    ctx.globalAlpha = prev * (cp === 0x2591 ? 0.25 : cp === 0x2592 ? 0.5 : 0.75);
+    ctx.fillRect(l, t, w, h);
+    ctx.globalAlpha = prev;
+    return true;
+  }
+  // Upper one-eighth.
+  if (cp === 0x2594) {
+    ctx.fillRect(l, t, w, Math.round(h / 8));
+    return true;
+  }
+  // Right one-eighth.
+  if (cp === 0x2595) {
+    const x = r - Math.round(w / 8);
+    ctx.fillRect(x, t, r - x, h);
+    return true;
+  }
+  // Quadrant glyphs.
+  const q = QUADRANTS[cp];
+  if (q) {
+    if (q[0]) ctx.fillRect(l, t, mx - l, my - t);
+    if (q[1]) ctx.fillRect(mx, t, r - mx, my - t);
+    if (q[2]) ctx.fillRect(l, my, mx - l, b - my);
+    if (q[3]) ctx.fillRect(mx, my, r - mx, b - my);
+    return true;
+  }
+  return false;
+}
+
 let emojiFontRegistered = false;
 function registerEmojiFontOnce(skiaMod: any): void {
   if (emojiFontRegistered) return;
@@ -167,6 +255,26 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
     for (const cell of cellRows[row]!) {
       if (cell.chars !== " " && cell.chars !== "") {
         ctx.fillStyle = resolveColor(cell.fg, defaultFg) ?? defaultFg;
+        // Block Elements (U+2580–U+259F) are painted as rects that tile the
+        // whole cell, so solid mascots and bars have no seams between cells.
+        // Bounds are rounded with the same formula for every cell, so adjacent
+        // edges line up exactly. Everything else goes through the font.
+        const cp = cell.chars.length === 1 ? cell.chars.codePointAt(0)! : -1;
+        if (
+          cp >= 0x2580 &&
+          cp <= 0x259f &&
+          drawBlockElement(
+            ctx,
+            cp,
+            Math.round(padding.x + col * cellWidth),
+            Math.round(padding.y + row * cellHeight),
+            Math.round(padding.x + (col + cell.width) * cellWidth),
+            Math.round(padding.y + (row + 1) * cellHeight),
+          )
+        ) {
+          col += cell.width;
+          continue;
+        }
         // VS16 clusters need the emoji family first so the color variation
         // glyph is chosen over an earlier mono family's base glyph.
         const fam = cell.chars.includes("\ufe0f") ? emojiFirstFamily : fontFamily;
