@@ -255,6 +255,9 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
     for (const cell of cellRows[row]!) {
       if (cell.chars !== " " && cell.chars !== "") {
         ctx.fillStyle = resolveColor(cell.fg, defaultFg) ?? defaultFg;
+        // SGR 2 (dim/faint): draw at half opacity, as most terminals do. Set
+        // before both paths; drawBlockElement multiplies shade alpha onto it.
+        ctx.globalAlpha = cell.dim ? 0.5 : 1;
         // Block Elements (U+2580–U+259F) are painted as rects that tile the
         // whole cell, so solid mascots and bars have no seams between cells.
         // Bounds are rounded with the same formula for every cell, so adjacent
@@ -272,6 +275,7 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
             Math.round(padding.y + (row + 1) * cellHeight),
           )
         ) {
+          ctx.globalAlpha = 1;
           col += cell.width;
           continue;
         }
@@ -279,8 +283,6 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
         // glyph is chosen over an earlier mono family's base glyph.
         const fam = cell.chars.includes("\ufe0f") ? emojiFirstFamily : fontFamily;
         ctx.font = `${cell.bold ? "bold " : ""}${fontSize}px ${fam}`;
-        // SGR 2 (dim/faint): draw at half opacity, as most terminals do.
-        ctx.globalAlpha = cell.dim ? 0.5 : 1;
         ctx.fillText(cell.chars, padding.x + col * cellWidth, padding.y + row * cellHeight);
         ctx.globalAlpha = 1;
       }
