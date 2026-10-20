@@ -1,9 +1,17 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute } from "node:path";
 import { z } from "zod";
 import type { SessionManager } from "../session-manager.js";
 import { renderScreenToPng } from "../skia-render.js";
 
 export const screenshotSessionSchema = z.object({
   session_id: z.string().describe("The session ID to screenshot"),
+  save_path: z
+    .string()
+    .optional()
+    .describe(
+      "Optional absolute path to also write the PNG to (parent directories are created). The image is still returned inline.",
+    ),
 });
 
 export type ScreenshotSessionArgs = z.infer<typeof screenshotSessionSchema>;
@@ -16,7 +24,11 @@ export type ScreenshotSessionArgs = z.infer<typeof screenshotSessionSchema>;
 export async function handleScreenshotSession(
   args: ScreenshotSessionArgs,
   sessionManager: SessionManager,
-): Promise<{ image_data: string } | { error: string }> {
+): Promise<{ image_data: string; saved_path?: string } | { error: string }> {
+  if (args.save_path !== undefined && !isAbsolute(args.save_path)) {
+    return { error: "save_path must be an absolute path" };
+  }
+
   const session = sessionManager.getSession(args.session_id);
   const terminal = session.terminal;
 
@@ -40,6 +52,12 @@ export async function handleScreenshotSession(
   });
   if (!png) {
     return { error: "Screen cells unavailable (screenshots require PTY mode)" };
+  }
+
+  if (args.save_path !== undefined) {
+    mkdirSync(dirname(args.save_path), { recursive: true });
+    writeFileSync(args.save_path, new Uint8Array(png));
+    return { image_data: png.toString("base64"), saved_path: args.save_path };
   }
   return { image_data: png.toString("base64") };
 }
