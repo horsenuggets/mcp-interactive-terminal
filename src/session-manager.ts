@@ -5,7 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath, sep } from "node:path";
 import { createTerminal, type TerminalOptions } from "./terminal.js";
 import {
   DEFAULT_COLS,
@@ -200,7 +200,9 @@ export class SessionManager {
     const real = canonicalize(targetPath);
     return this.config.allowedPaths.some((allowed) => {
       const realAllowed = canonicalize(allowed);
-      return real === realAllowed || real.startsWith(realAllowed + "/");
+      // The filesystem root already ends in a separator; don't double it.
+      const prefix = realAllowed.endsWith(sep) ? realAllowed : realAllowed + sep;
+      return real === realAllowed || real.startsWith(prefix);
     });
   }
 

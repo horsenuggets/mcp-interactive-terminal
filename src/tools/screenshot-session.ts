@@ -29,6 +29,11 @@ export async function handleScreenshotSession(
     if (!isAbsolute(args.save_path)) {
       return { error: "save_path must be an absolute path" };
     }
+    // Validation collapses ".." lexically before resolving symlinks, but the
+    // filesystem resolves it after, so a linked parent could escape the root.
+    if (args.save_path.split(/[\\/]/).includes("..")) {
+      return { error: 'save_path must not contain ".." segments' };
+    }
     if (!sessionManager.isRealPathAllowed(args.save_path)) {
       return { error: `Path "${args.save_path}" is outside the configured allowed paths.` };
     }

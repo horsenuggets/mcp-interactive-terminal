@@ -143,6 +143,12 @@ describe("SessionManager", () => {
       rmSync(root, { recursive: true, force: true });
     });
 
+    it("allows descendants when the filesystem root is the allowed path", () => {
+      manager = new SessionManager({ ...defaultConfig, allowedPaths: ["/"] });
+      expect(manager.isRealPathAllowed(join(allowed, "shot.png"))).toBe(true);
+      expect(manager.isRealPathAllowed("/")).toBe(true);
+    });
+
     it("allows a not-yet-existing path under an allowed root", () => {
       expect(manager.isRealPathAllowed(join(allowed, "new", "deep", "shot.png"))).toBe(true);
     });

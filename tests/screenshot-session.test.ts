@@ -29,4 +29,14 @@ describe("handleScreenshotSession save_path", () => {
     );
     expect(result).toEqual({ error: 'Path "/etc/shot.png" is outside the configured allowed paths.' });
   });
+
+  it("rejects parent-traversal segments even when the lexical path is allowed", async () => {
+    // /allowed/link/../shot.png normalizes to /allowed/shot.png, but if `link`
+    // is a symlink the filesystem would resolve it somewhere else entirely.
+    const result = await handleScreenshotSession(
+      { session_id: "s", save_path: "/allowed/link/../shot.png" },
+      stubManager(true),
+    );
+    expect(result).toEqual({ error: 'save_path must not contain ".." segments' });
+  });
 });
