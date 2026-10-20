@@ -4,7 +4,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { resolve as resolvePath } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve as resolvePath, sep } from "node:path";
 import { createTerminal, type TerminalOptions } from "./terminal.js";
 import {
   DEFAULT_COLS,
@@ -14,6 +15,23 @@ import {
   type ServerConfig,
 } from "./types.js";
 import { audit } from "./utils/audit-logger.js";
+
+/**
+ * Resolves symlinks in a path that may not fully exist yet: the deepest
+ * existing ancestor is resolved with realpath and the missing tail appended.
+ */
+function canonicalize(targetPath: string): string {
+  let existing = resolvePath(targetPath);
+  const tail: string[] = [];
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    tail.unshift(basename(existing));
+    existing = parent;
+  }
+  const real = existsSync(existing) ? realpathSync(existing) : existing;
+  return tail.length > 0 ? join(real, ...tail) : real;
+}
 
 export class SessionManager {
   private sessions = new Map<string, Session>();
@@ -170,6 +188,21 @@ export class SessionManager {
     return this.config.allowedPaths.some((allowed) => {
       const resolvedAllowed = resolvePath(allowed);
       return resolved === resolvedAllowed || resolved.startsWith(resolvedAllowed + "/");
+    });
+  }
+
+  /**
+   * Like isPathAllowed, but compares symlink-resolved paths so a link inside an
+   * allowed root can't redirect a write outside it. Use this before writing files.
+   */
+  isRealPathAllowed(targetPath: string): boolean {
+    if (this.config.allowedPaths.length === 0) return true;
+    const real = canonicalize(targetPath);
+    return this.config.allowedPaths.some((allowed) => {
+      const realAllowed = canonicalize(allowed);
+      // The filesystem root already ends in a separator; don't double it.
+      const prefix = realAllowed.endsWith(sep) ? realAllowed : realAllowed + sep;
+      return real === realAllowed || real.startsWith(prefix);
     });
   }
 

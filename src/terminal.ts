@@ -453,6 +453,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
               fg: fgSpec(c),
               bg: bgSpec(c),
               bold: c.isBold(),
+              dim: c.isDim() !== 0,
             });
           }
         }

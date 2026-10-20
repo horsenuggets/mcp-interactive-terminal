@@ -260,16 +260,20 @@ function createServer(cfg?: ServerConfig) {
     "screenshot_session",
     "Render the session's current terminal screen to a PNG image, returned as base64-encoded PNG data. Renders directly from the emulator grid with skia-canvas (color emoji, wide-glyph overflow, full font fallback) — no viewer window required, works headlessly. Only available in PTY mode.",
     screenshotSessionSchema.shape,
-    { title: "Screenshot Session", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    async ({ session_id }) => {
+    // Not read-only: save_path writes (and may overwrite) a file on disk.
+    { title: "Screenshot Session", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    async ({ session_id, save_path }) => {
       try {
-        const result = await handleScreenshotSession({ session_id }, sessionManager);
+        const result = await handleScreenshotSession({ session_id, save_path }, sessionManager);
         if ("error" in result) {
           return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
         }
         return {
           content: [
             { type: "image", data: result.image_data, mimeType: "image/png" },
+            ...(result.saved_path
+              ? [{ type: "text" as const, text: `Saved to ${result.saved_path}` }]
+              : []),
           ],
         };
       } catch (err) {

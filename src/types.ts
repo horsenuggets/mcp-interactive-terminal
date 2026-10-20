@@ -107,6 +107,7 @@ export interface RenderCell {
   fg: CellColorSpec;
   bg: CellColorSpec;
   bold: boolean;
+  dim: boolean;
 }
 
 // --- Terminal Wrapper ---
