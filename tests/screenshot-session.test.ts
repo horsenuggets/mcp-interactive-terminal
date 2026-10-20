@@ -6,7 +6,7 @@ import type { SessionManager } from "../src/session-manager.js";
 // answers isPathAllowed is enough to exercise those checks.
 function stubManager(allowed: boolean): SessionManager {
   return {
-    isPathAllowed: () => allowed,
+    isRealPathAllowed: () => allowed,
     getSession: () => {
       throw new Error("getSession should not be reached");
     },

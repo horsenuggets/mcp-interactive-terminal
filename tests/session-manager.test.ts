@@ -1,4 +1,7 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SessionManager } from "../src/session-manager.js";
 import type { ServerConfig } from "../src/types.js";
 import { canSpawnPty } from "./can-spawn-pty.js";
@@ -120,5 +123,40 @@ describe("SessionManager", () => {
 
     expect(manager.isPathAllowed("/anywhere")).toBe(true);
     expect(manager.isPathAllowed("/etc/passwd")).toBe(true);
+  });
+
+  describe("isRealPathAllowed", () => {
+    let root: string;
+    let allowed: string;
+    let outside: string;
+
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), "realpath-"));
+      allowed = join(root, "allowed");
+      outside = join(root, "outside");
+      mkdirSync(allowed);
+      mkdirSync(outside);
+      manager = new SessionManager({ ...defaultConfig, allowedPaths: [allowed] });
+    });
+
+    afterEach(() => {
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it("allows a not-yet-existing path under an allowed root", () => {
+      expect(manager.isRealPathAllowed(join(allowed, "new", "deep", "shot.png"))).toBe(true);
+    });
+
+    it("rejects a path whose parent directory is a symlink outside the root", () => {
+      symlinkSync(outside, join(allowed, "link"));
+      expect(manager.isRealPathAllowed(join(allowed, "link", "shot.png"))).toBe(false);
+      expect(manager.isRealPathAllowed(join(allowed, "link", "missing", "shot.png"))).toBe(false);
+    });
+
+    it("rejects a destination file that is a symlink outside the root", () => {
+      writeFileSync(join(outside, "target.png"), "");
+      symlinkSync(join(outside, "target.png"), join(allowed, "shot.png"));
+      expect(manager.isRealPathAllowed(join(allowed, "shot.png"))).toBe(false);
+    });
   });
 });
