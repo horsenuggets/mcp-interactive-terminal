@@ -25,8 +25,13 @@ export async function handleScreenshotSession(
   args: ScreenshotSessionArgs,
   sessionManager: SessionManager,
 ): Promise<{ image_data: string; saved_path?: string } | { error: string }> {
-  if (args.save_path !== undefined && !isAbsolute(args.save_path)) {
-    return { error: "save_path must be an absolute path" };
+  if (args.save_path !== undefined) {
+    if (!isAbsolute(args.save_path)) {
+      return { error: "save_path must be an absolute path" };
+    }
+    if (!sessionManager.isPathAllowed(args.save_path)) {
+      return { error: `Path "${args.save_path}" is outside the configured allowed paths.` };
+    }
   }
 
   const session = sessionManager.getSession(args.session_id);
