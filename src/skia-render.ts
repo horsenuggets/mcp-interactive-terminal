@@ -279,7 +279,10 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
         // glyph is chosen over an earlier mono family's base glyph.
         const fam = cell.chars.includes("\ufe0f") ? emojiFirstFamily : fontFamily;
         ctx.font = `${cell.bold ? "bold " : ""}${fontSize}px ${fam}`;
+        // SGR 2 (dim/faint): draw at half opacity, as most terminals do.
+        ctx.globalAlpha = cell.dim ? 0.5 : 1;
         ctx.fillText(cell.chars, padding.x + col * cellWidth, padding.y + row * cellHeight);
+        ctx.globalAlpha = 1;
       }
       col += cell.width;
     }
