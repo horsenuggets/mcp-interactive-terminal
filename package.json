@@ -15,7 +15,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && chmod +x dist/bin.js dist/index.js && mkdir -p dist/assets && cp -R src/assets/. dist/assets/",
+    "build": "tsc && chmod +x dist/bin.js dist/index.js && mkdir -p dist/assets && cp -R src/assets/. dist/assets/ && cp src/theme.json dist/theme.json",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
