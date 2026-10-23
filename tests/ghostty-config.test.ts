@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -46,6 +46,12 @@ describe("applyGhosttyFontFamilies", () => {
       "a.conf",
       "?b.conf",
     ]);
+  });
+
+  it("treats a quoted empty config-file value as a reset", () => {
+    const result = applyGhosttyFontFamilies('config-file = old.conf\nconfig-file = ""\n');
+    expect(result.includes).toEqual([]);
+    expect(result.clearedIncludes).toBe(true);
   });
 
   it("clears accumulated includes on an empty config-file value", () => {
@@ -111,6 +117,22 @@ describe("readGhosttyFontFamilies", () => {
     writeFileSync(join(dir, "inc.conf"), 'font-family = ""\nfont-family = Included\n');
     writeFileSync(join(dir, "r2", "config"), "font-family = Root Two\n");
     expect(readGhosttyFontFamilies([join(dir, "config"), join(dir, "r2", "config")])).toEqual(["Included"]);
+  });
+
+  it("drops pending includes on a quoted empty config-file", () => {
+    writeFileSync(join(dir, "config"), 'config-file = old.conf\nconfig-file = ""\n');
+    writeFileSync(join(dir, "old.conf"), "font-family = Old Mono\n");
+    expect(readGhosttyFontFamilies([join(dir, "config")])).toEqual([]);
+  });
+
+  it("resolves nested includes next to a symlinked include's real file", () => {
+    mkdirSync(join(dir, "cfg"));
+    mkdirSync(join(dir, "shared"));
+    writeFileSync(join(dir, "cfg", "config"), "config-file = fonts.conf\n");
+    writeFileSync(join(dir, "shared", "fonts.conf"), "font-family = Shared Mono\nconfig-file = fallback.conf\n");
+    writeFileSync(join(dir, "shared", "fallback.conf"), "font-family = Shared Fallback\n");
+    symlinkSync(join(dir, "shared", "fonts.conf"), join(dir, "cfg", "fonts.conf"));
+    expect(readGhosttyFontFamilies([join(dir, "cfg", "config")])).toEqual(["Shared Mono", "Shared Fallback"]);
   });
 
   it("drops pending includes when an empty config-file is seen", () => {

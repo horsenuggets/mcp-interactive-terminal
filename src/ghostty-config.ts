@@ -3,7 +3,7 @@
  * with the same fonts as their terminal by default.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { quoteFontFamily } from "./font-stack.js";
@@ -41,7 +41,7 @@ export function applyGhosttyFontFamilies(
     if (!match) continue;
     const raw = match[2]!.trim();
     if (match[1] === "config-file") {
-      if (raw === "") {
+      if (unquoteValue(raw) === "") {
         includes.length = 0;
         clearedIncludes = true;
       } else {
@@ -75,7 +75,13 @@ export function resolveGhosttyInclude(
   }
   value = unquoteValue(value);
   if (value === "~" || value.startsWith("~/")) value = join(homedir(), value.slice(1));
-  const path = isAbsolute(value) ? value : resolve(dirname(fromFile), value);
+  const lexical = isAbsolute(value) ? value : resolve(dirname(fromFile), value);
+  // Like Ghostty, use the real path of an existing file so its own relative
+  // includes resolve next to the symlink target. Missing files keep the lexical path.
+  let path = lexical;
+  try {
+    path = realpathSync(lexical);
+  } catch {}
   return { path, optional };
 }
 
@@ -117,7 +123,11 @@ export function readGhosttyFontFamilies(rootPaths: string[]): string[] {
   const families: string[] = [];
   const queue: string[] = [];
   const loaded = new Set<string>();
-  for (const path of rootPaths) {
+  for (const rootPath of rootPaths) {
+    let path = rootPath;
+    try {
+      path = realpathSync(rootPath);
+    } catch {}
     loaded.add(path);
     loadGhosttyConfigFile(path, families, queue);
   }
