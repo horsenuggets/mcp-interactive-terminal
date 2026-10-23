@@ -10,6 +10,7 @@
 
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { splitFontStack, unquoteFontFamily } from "./font-stack.js";
 import { ghosttyFontFamilyStack } from "./ghostty-config.js";
 import type { CellColorSpec, RenderCell, TerminalWrapper } from "./types.js";
 
@@ -156,6 +157,21 @@ function registerSessionFonts(skiaMod: any, paths: string[] | undefined): void {
   }
 }
 
+/**
+ * Reorders a font stack so emoji families come first, then the bundled
+ * EmojiFallback color font (so a default Menlo-only stack still resolves VS16
+ * color glyphs), then the remaining families. Splitting is quote-aware, so a
+ * quoted name containing a comma stays one family.
+ */
+export function emojiFirstFontStack(fontFamily: string): string {
+  const entries = splitFontStack(fontFamily);
+  const isEmoji = (entry: string) => /emoji/i.test(unquoteFontFamily(entry));
+  const emojiEntries = entries.filter(isEmoji);
+  const otherEntries = entries.filter((e) => !isEmoji(e));
+  const hasFallback = emojiEntries.some((e) => unquoteFontFamily(e) === "EmojiFallback");
+  return [...emojiEntries, ...(hasFallback ? [] : ["EmojiFallback"]), ...otherEntries].join(", ");
+}
+
 export interface RenderOptions {
   skiaMod: any;
   fonts?: string[];
@@ -203,17 +219,7 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
   // renders monochrome. Rendering VS16 cells with the emoji family first makes
   // the variation sequence resolve to the color glyph. (Terminals like Ghostty
   // pick the emoji font here via CoreText; this matches that.)
-  const families = fontFamily.split(",").map((s) => s.trim()).filter(Boolean);
-  // Put emoji families first, then the bundled EmojiFallback color font (so a
-  // default Menlo-only stack still resolves VS16 color glyphs), then the mono
-  // families. Dedupe in case the caller already named EmojiFallback.
-  const userEmojiFamilies = families.filter((f) => /emoji/i.test(f));
-  const monoFamilies = families.filter((f) => !/emoji/i.test(f));
-  const emojiFirstFamily = [
-    ...userEmojiFamilies,
-    ...(userEmojiFamilies.some((f) => f === "EmojiFallback") ? [] : ["EmojiFallback"]),
-    ...monoFamilies,
-  ].join(", ");
+  const emojiFirstFamily = emojiFirstFontStack(fontFamily);
   const cellWidth = 7.22 * scale;
   const cellHeight = 15 * scale;
   const padding = { x: 10 * scale, y: 8 * scale };
