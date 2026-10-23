@@ -15,13 +15,12 @@ export function splitFontStack(stack: string): string[] {
   let quote: string | null = null;
   for (let i = 0; i < stack.length; i++) {
     const ch = stack[i]!;
-    if (quote) {
+    if (ch === "\\" && i + 1 < stack.length) {
+      // Escaped characters (inside or outside quotes) never delimit.
+      current += ch + stack[++i];
+    } else if (quote) {
       current += ch;
-      if (ch === "\\" && i + 1 < stack.length) {
-        current += stack[++i];
-      } else if (ch === quote) {
-        quote = null;
-      }
+      if (ch === quote) quote = null;
     } else if (ch === '"' || ch === "'") {
       quote = ch;
       current += ch;
@@ -42,5 +41,5 @@ export function unquoteFontFamily(entry: string): string {
   if ((q === '"' || q === "'") && entry.length >= 2 && entry.endsWith(q)) {
     return entry.slice(1, -1).replace(/\\(.)/g, "$1");
   }
-  return entry;
+  return entry.replace(/\\(.)/g, "$1");
 }

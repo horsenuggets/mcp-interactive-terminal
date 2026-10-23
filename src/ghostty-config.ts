@@ -102,15 +102,21 @@ function loadGhosttyConfigFile(path: string, families: string[], queue: string[]
   return clearedIncludes;
 }
 
-/** Ghostty's default config file locations, in the order Ghostty loads them. */
-function ghosttyConfigPaths(): string[] {
-  const xdg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const paths = [join(xdg, "ghostty", "config"), join(xdg, "ghostty", "config.ghostty")];
-  if (process.platform === "darwin") {
-    const appSupport = join(homedir(), "Library", "Application Support", "com.mitchellh.ghostty");
-    paths.push(join(appSupport, "config"), join(appSupport, "config.ghostty"));
+/**
+ * Ghostty's default config file locations, in the order Ghostty loads them:
+ * in each directory `config.ghostty` then the legacy `config`, XDG before the
+ * macOS Application Support directory (https://ghostty.org/docs/config).
+ */
+export function ghosttyConfigPaths(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
+): string[] {
+  const dirs = [join(env.XDG_CONFIG_HOME || join(home, ".config"), "ghostty")];
+  if (platform === "darwin") {
+    dirs.push(join(home, "Library", "Application Support", "com.mitchellh.ghostty"));
   }
-  return paths;
+  return dirs.flatMap((dir) => [join(dir, "config.ghostty"), join(dir, "config")]);
 }
 
 /**

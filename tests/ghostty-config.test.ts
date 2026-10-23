@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyGhosttyFontFamilies,
+  ghosttyConfigPaths,
   readGhosttyFontFamilies,
   resolveGhosttyInclude,
 } from "../src/ghostty-config.js";
@@ -69,6 +70,37 @@ describe("resolveGhosttyInclude", () => {
     });
     expect(resolveGhosttyInclude("?/abs/x", "/cfg/config")).toEqual({ path: "/abs/x", optional: true });
     expect(resolveGhosttyInclude('"?literal"', "/cfg/config")).toEqual({ path: "/cfg/?literal", optional: false });
+  });
+});
+
+describe("ghosttyConfigPaths", () => {
+  it("loads config.ghostty before config, XDG before Application Support", () => {
+    expect(ghosttyConfigPaths({ XDG_CONFIG_HOME: "/xdg" }, "darwin", "/home/u")).toEqual([
+      "/xdg/ghostty/config.ghostty",
+      "/xdg/ghostty/config",
+      "/home/u/Library/Application Support/com.mitchellh.ghostty/config.ghostty",
+      "/home/u/Library/Application Support/com.mitchellh.ghostty/config",
+    ]);
+    expect(ghosttyConfigPaths({}, "linux", "/home/u")).toEqual([
+      "/home/u/.config/ghostty/config.ghostty",
+      "/home/u/.config/ghostty/config",
+    ]);
+  });
+});
+
+describe("readGhosttyFontFamilies", () => {
+  it("lets the legacy config override config.ghostty when both exist", () => {
+    const d = mkdtempSync(join(tmpdir(), "ghostty-order-"));
+    try {
+      writeFileSync(join(d, "config.ghostty"), 'font-family = ""\nfont-family = New Name\n');
+      writeFileSync(join(d, "config"), 'font-family = ""\nfont-family = Legacy Name\n');
+      const roots = ghosttyConfigPaths({ XDG_CONFIG_HOME: "/unused" }, "linux", "/unused").map((p) =>
+        join(d, p.endsWith("config.ghostty") ? "config.ghostty" : "config"),
+      );
+      expect(readGhosttyFontFamilies(roots)).toEqual(["Legacy Name"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });
 
@@ -154,6 +186,13 @@ describe("font stacks", () => {
     const entries = splitFontStack(stack);
     expect(entries).toEqual(['"Mono, Special"', "'My Mono'", "Menlo"]);
     expect(entries.map(unquoteFontFamily)).toEqual(["Mono, Special", "My Mono", "Menlo"]);
+  });
+
+  it("does not treat an escaped apostrophe outside quotes as a quote", () => {
+    const stack = "Bob\\'s Mono, Apple Color Emoji";
+    expect(splitFontStack(stack)).toEqual(["Bob\\'s Mono", "Apple Color Emoji"]);
+    expect(unquoteFontFamily("Bob\\'s Mono")).toBe("Bob's Mono");
+    expect(emojiFirstFontStack(stack)).toBe("Apple Color Emoji, EmojiFallback, Bob\\'s Mono");
   });
 
   it("moves emoji families first without splitting quoted names", () => {
