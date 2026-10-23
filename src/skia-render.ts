@@ -44,6 +44,27 @@ function rgbToHex(r: number, g: number, b: number): string {
 }
 
 /**
+ * Whole-pixel bounds of a cell spanning `width` columns. Cell sizes are fractional, so
+ * every cell edge is rounded with the same formula: neighbors share edges exactly, and
+ * a cell's background and any block glyph over it cover the same pixels.
+ */
+export function cellPixelBounds(
+  padding: { x: number; y: number },
+  cellWidth: number,
+  cellHeight: number,
+  col: number,
+  row: number,
+  width: number,
+): { b: number; l: number; r: number; t: number } {
+  return {
+    b: Math.round(padding.y + (row + 1) * cellHeight),
+    l: Math.round(padding.x + col * cellWidth),
+    r: Math.round(padding.x + (col + width) * cellWidth),
+    t: Math.round(padding.y + row * cellHeight),
+  };
+}
+
+/**
  * The colors to paint a cell with: its glyph color, and its background fill, or null
  * when the cell shows the canvas background. SGR 7 (inverse) swaps the two, with the
  * defaults taking each other's place, so an inverse cell with default colors fills
@@ -274,8 +295,11 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
     for (const cell of cellRows[row]!) {
       const { bg } = cellPaintColors(cell, resolveColor, theme);
       if (bg) {
+        // Snap to the same pixel bounds block elements use, so a background never
+        // pokes out past a block glyph drawn over it as an antialiased sliver.
+        const r = cellPixelBounds(padding, cellWidth, cellHeight, col, row, cell.width);
         ctx.fillStyle = bg;
-        ctx.fillRect(padding.x + col * cellWidth, padding.y + row * cellHeight, cellWidth * cell.width, cellHeight);
+        ctx.fillRect(r.l, r.t, r.r - r.l, r.b - r.t);
       }
       col += cell.width;
     }
@@ -293,18 +317,8 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
         // Bounds are rounded with the same formula for every cell, so adjacent
         // edges line up exactly. Everything else goes through the font.
         const cp = cell.chars.length === 1 ? cell.chars.codePointAt(0)! : -1;
-        if (
-          cp >= 0x2580 &&
-          cp <= 0x259f &&
-          drawBlockElement(
-            ctx,
-            cp,
-            Math.round(padding.x + col * cellWidth),
-            Math.round(padding.y + row * cellHeight),
-            Math.round(padding.x + (col + cell.width) * cellWidth),
-            Math.round(padding.y + (row + 1) * cellHeight),
-          )
-        ) {
+        const r = cellPixelBounds(padding, cellWidth, cellHeight, col, row, cell.width);
+        if (cp >= 0x2580 && cp <= 0x259f && drawBlockElement(ctx, cp, r.l, r.t, r.r, r.b)) {
           ctx.globalAlpha = 1;
           col += cell.width;
           continue;
