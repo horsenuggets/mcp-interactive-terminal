@@ -43,6 +43,28 @@ function rgbToHex(r: number, g: number, b: number): string {
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
 
+/**
+ * The colors to paint a cell with: its glyph color, and its background fill, or null
+ * when the cell shows the canvas background. SGR 7 (inverse) swaps the two, with the
+ * defaults taking each other's place, so an inverse cell with default colors fills
+ * with the theme foreground and draws its glyph in the theme background. Terminal
+ * UIs rely on this to draw shapes that have no glyph, like a block's missing upper
+ * eighths.
+ */
+export function cellPaintColors(
+  cell: Pick<RenderCell, "bg" | "fg" | "inverse">,
+  resolve: (spec: CellColorSpec, fallback: string | null) => string | null,
+  colors: { background: string; foreground: string },
+): { bg: string | null; fg: string } {
+  if (cell.inverse) {
+    return {
+      bg: resolve(cell.fg, colors.foreground) ?? colors.foreground,
+      fg: resolve(cell.bg, colors.background) ?? colors.background,
+    };
+  }
+  return { bg: resolve(cell.bg, null), fg: resolve(cell.fg, colors.foreground) ?? colors.foreground };
+}
+
 // Which of the four cell quadrants each Block-Elements quadrant glyph fills,
 // ordered [upperLeft, upperRight, lowerLeft, lowerRight].
 const QUADRANTS: Record<number, [boolean, boolean, boolean, boolean]> = {
@@ -234,7 +256,6 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
   ctx.textBaseline = "top";
 
-  const defaultFg = theme.foreground;
   const resolveColor = (spec: CellColorSpec, fallback: string | null): string | null => {
     switch (spec.mode) {
       case "palette":
@@ -251,7 +272,7 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
   for (let row = 0; row < cellRows.length; row++) {
     let col = 0;
     for (const cell of cellRows[row]!) {
-      const bg = resolveColor(cell.bg, null);
+      const { bg } = cellPaintColors(cell, resolveColor, theme);
       if (bg) {
         ctx.fillStyle = bg;
         ctx.fillRect(padding.x + col * cellWidth, padding.y + row * cellHeight, cellWidth * cell.width, cellHeight);
@@ -263,7 +284,7 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
     let col = 0;
     for (const cell of cellRows[row]!) {
       if (cell.chars !== " " && cell.chars !== "") {
-        ctx.fillStyle = resolveColor(cell.fg, defaultFg) ?? defaultFg;
+        ctx.fillStyle = cellPaintColors(cell, resolveColor, theme).fg;
         // SGR 2 (dim/faint): draw at half opacity, as most terminals do. Set
         // before both paths; drawBlockElement multiplies shade alpha onto it.
         ctx.globalAlpha = cell.dim ? 0.5 : 1;

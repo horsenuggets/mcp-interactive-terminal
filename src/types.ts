@@ -108,6 +108,8 @@ export interface RenderCell {
   bg: CellColorSpec;
   bold: boolean;
   dim: boolean;
+  /** SGR 7: the renderer swaps fg and bg, defaults included. */
+  inverse: boolean;
 }
 
 // --- Terminal Wrapper ---
