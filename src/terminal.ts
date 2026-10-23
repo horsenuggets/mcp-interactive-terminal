@@ -347,7 +347,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
           const bufLine = buffer.getLine(i);
           if (!bufLine) continue;
           let lineStr = "";
-          let prevFg = -1, prevBg = -1, prevBold = 0, prevDim = 0, prevItalic = 0;
+          let prevFg = -1, prevBg = -1, prevBold = 0, prevDim = 0, prevItalic = 0, prevInverse = 0;
           const cell = (buffer as any).getNullCell ? (buffer as any).getNullCell() : undefined;
           for (let x = 0; x < bufLine.length; x++) {
             const c = cell ? (bufLine.getCell(x, cell), cell) : bufLine.getCell(x);
@@ -361,10 +361,12 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
             const bold = c.isBold();
             const dim = c.isDim();
             const italic = c.isItalic();
+            const inverse = c.isInverse();
 
             if (bold !== prevBold) sgr.push(bold ? "1" : "22");
             if (dim !== prevDim) sgr.push(dim ? "2" : "22");
             if (italic !== prevItalic) sgr.push(italic ? "3" : "23");
+            if (inverse !== prevInverse) sgr.push(inverse ? "7" : "27");
 
             // Foreground
             let fg = -1;
@@ -395,10 +397,10 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
             if (sgr.length > 0) lineStr += `\x1b[${sgr.join(";")}m`;
             lineStr += ch || " ";
 
-            prevFg = fg; prevBg = bg; prevBold = bold; prevDim = dim; prevItalic = italic;
+            prevFg = fg; prevBg = bg; prevBold = bold; prevDim = dim; prevItalic = italic; prevInverse = inverse;
           }
           // Reset at end of line
-          if (prevFg !== -1 || prevBg !== -1 || prevBold || prevDim || prevItalic) {
+          if (prevFg !== -1 || prevBg !== -1 || prevBold || prevDim || prevItalic || prevInverse) {
             lineStr += "\x1b[0m";
           }
           lines.push(lineStr);
@@ -454,6 +456,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
               bg: bgSpec(c),
               bold: c.isBold(),
               dim: c.isDim() !== 0,
+              inverse: c.isInverse() !== 0,
             });
           }
         }
@@ -466,7 +469,8 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
       // viewport and its window doesn't grow row by row as output appears.
       if (!trim) return { rows: allRows, topOffset: 0 };
       const isBlank = (row: RenderCell[]): boolean =>
-        row.every((cell) => (cell.chars === " " || cell.chars === "") && cell.bg.mode === "default");
+        // An inverse space paints the foreground color across the cell, so it isn't blank.
+        row.every((cell) => (cell.chars === " " || cell.chars === "") && cell.bg.mode === "default" && !cell.inverse);
       while (allRows.length > 0 && isBlank(allRows[allRows.length - 1]!)) allRows.pop();
       let topOffset = 0;
       while (allRows.length > 0 && isBlank(allRows[0]!)) {
