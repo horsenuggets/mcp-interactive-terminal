@@ -326,6 +326,8 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
     readScreen(fullScreen = false, rawAnsi = false): { text: string; topOffset: number } {
       const buffer = xterm.buffer.active;
       const lines: string[] = [];
+      // Raw mode only, parallel to lines: whether the line has inverse cells.
+      const paintedLines: boolean[] = [];
 
       const getRows = (): { start: number; end: number } => {
         if (fullScreen) {
@@ -347,6 +349,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
           const bufLine = buffer.getLine(i);
           if (!bufLine) continue;
           let lineStr = "";
+          let painted = false;
           let prevFg = -1, prevBg = -1, prevBold = 0, prevDim = 0, prevItalic = 0, prevInverse = 0;
           const cell = (buffer as any).getNullCell ? (buffer as any).getNullCell() : undefined;
           for (let x = 0; x < bufLine.length; x++) {
@@ -396,6 +399,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
 
             if (sgr.length > 0) lineStr += `\x1b[${sgr.join(";")}m`;
             lineStr += ch || " ";
+            if (inverse) painted = true;
 
             prevFg = fg; prevBg = bg; prevBold = bold; prevDim = dim; prevItalic = italic; prevInverse = inverse;
           }
@@ -404,15 +408,23 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
             lineStr += "\x1b[0m";
           }
           lines.push(lineStr);
+          paintedLines.push(painted);
         }
       }
 
-      while (lines.length > 0 && lines[lines.length - 1].replace(/\x1b\[[0-9;]*m/g, "").trim() === "") lines.pop();
+      // A raw line holding inverse cells paints the foreground color even when
+      // its text is only spaces, so it isn't blank. Plain-text lines track none.
+      const isBlank = (i: number): boolean => !paintedLines[i] && lines[i]!.replace(/\x1b\[[0-9;]*m/g, "").trim() === "";
+      while (lines.length > 0 && isBlank(lines.length - 1)) {
+        lines.pop();
+        paintedLines.length = Math.min(paintedLines.length, lines.length);
+      }
       // Count and strip leading blank rows, report offset so callers can
       // compute real screen coordinates for mouse events.
       let topOffset = 0;
-      while (lines.length > 0 && lines[0]!.replace(/\x1b\[[0-9;]*m/g, "").trim() === "") {
+      while (lines.length > 0 && isBlank(0)) {
         lines.shift();
+        paintedLines.shift();
         topOffset++;
       }
       return { text: lines.join("\n"), topOffset };

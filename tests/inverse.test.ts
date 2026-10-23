@@ -36,6 +36,11 @@ describe("cellPaintColors", () => {
   });
 });
 
+// Pattern for one SGR sequence that includes `param` among its parameters.
+function sgrWith(param: string): string {
+  return `\\x1b\\[(?:[0-9;]*;)?${param}(?:;[0-9;]*)?m`;
+}
+
 const BASH = "/bin/bash";
 const itPty = canSpawnPty(BASH) ? it : it.skip;
 
@@ -61,6 +66,24 @@ describe("inverse cells from a live terminal", () => {
     expect(line!.slice(0, 3).map((c) => c.inverse)).toEqual([false, true, false]);
 
     const raw = terminal.readScreen(false, true).text;
-    expect(raw).toMatch(/A\x1b\[[0-9;]*\b7\b[0-9;]*mB\x1b\[[0-9;]*\b27\b[0-9;]*mC/);
+    expect(raw).toMatch(new RegExp(`A${sgrWith("7")}B${sgrWith("27")}C`));
+  }, 10000);
+
+  itPty("keeps inverse-space rows at both screen boundaries in raw output", async () => {
+    terminal = await createTerminal({ command: BASH, rows: 6 });
+    // Clear the screen, paint an inverse-space row at the very top, then home the
+    // cursor to the bottom row and paint another one there.
+    terminal.write("clear; printf '\\033[1;1H\\033[7m   \\033[0m\\033[6;1H\\033[7m   \\033[0m'; sleep 5\n");
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const plain = terminal.readScreen(false, false);
+    const raw = terminal.readScreen(false, true);
+    // Raw mode keeps both painted rows, so nothing is trimmed from either end.
+    expect(raw.topOffset).toBe(0);
+    const rawLines = raw.text.split("\n");
+    expect(rawLines).toHaveLength(6);
+    for (const line of [rawLines[0]!, rawLines[5]!]) expect(line).toMatch(new RegExp(`${sgrWith("7")} {3}`));
+    // Plain-text trimming is unchanged: the space-only rows still trim away.
+    expect(plain.text).toBe("");
   }, 10000);
 });
