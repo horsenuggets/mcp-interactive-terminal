@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { drawBlockElement } from "../src/skia-render.js";
+import { cellPixelBounds, drawBlockElement } from "../src/skia-render.js";
 
 interface Rect {
   x: number;
@@ -126,5 +126,33 @@ describe("drawBlockElement", () => {
     drawBlockElement(vert.ctx, 0x2588, bx(0), by(1), bx(1), by(2));
     const [v0, v1] = vert.rects;
     expect(v0!.y + v0!.h).toBe(v1!.y);
+  });
+});
+
+describe("cellPixelBounds", () => {
+  const padding = { x: 12, y: 8 };
+  // A fractional cell size, like the renderer's 7.22 * scale.
+  const cw = 7.22 * 2;
+  const ch = 15 * 2;
+
+  it("returns whole pixels and tiles neighbors without gaps or overlap", () => {
+    for (let row = 0; row < 5; row++) {
+      for (let col = 0; col < 40; col++) {
+        const a = cellPixelBounds(padding, cw, ch, col, row, 1);
+        const right = cellPixelBounds(padding, cw, ch, col + 1, row, 1);
+        const below = cellPixelBounds(padding, cw, ch, col, row + 1, 1);
+        for (const v of [a.l, a.t, a.r, a.b]) expect(Number.isInteger(v)).toBe(true);
+        expect(right.l).toBe(a.r);
+        expect(below.t).toBe(a.b);
+      }
+    }
+  });
+
+  it("gives a wide cell the span of its two single-width halves", () => {
+    for (let col = 0; col < 40; col++) {
+      const wide = cellPixelBounds(padding, cw, ch, col, 0, 2);
+      expect(wide.l).toBe(cellPixelBounds(padding, cw, ch, col, 0, 1).l);
+      expect(wide.r).toBe(cellPixelBounds(padding, cw, ch, col + 1, 0, 1).r);
+    }
   });
 });
