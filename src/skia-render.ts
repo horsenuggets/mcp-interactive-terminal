@@ -10,6 +10,7 @@
 
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { ghosttyFontFamilyStack } from "./ghostty-config.js";
 import type { CellColorSpec, RenderCell, TerminalWrapper } from "./types.js";
 
 const require = createRequire(import.meta.url);
@@ -191,7 +192,9 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
 
   const scale = 2;
   const fontSize = 12 * scale;
-  const fontFamily = opts.fontFamily ?? "Menlo";
+  // Default to the user's Ghostty font stack so glyph choice (e.g. a text-style
+  // ⏺ from a patch font instead of Apple Color Emoji) matches their terminal.
+  const fontFamily = opts.fontFamily ?? ghosttyFontFamilyStack() ?? "Menlo";
   // For emoji-presentation variation sequences ("<base> U+FE0F", e.g. ⚠️ ☑️),
   // the color glyph lives in the emoji font's cmap format-14 subtable. When the
   // bare base codepoint ALSO exists in an earlier mono family (e.g. Gridfit
