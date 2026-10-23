@@ -47,6 +47,12 @@ describe("applyGhosttyFontFamilies", () => {
       "?b.conf",
     ]);
   });
+
+  it("clears accumulated includes on an empty config-file value", () => {
+    const result = applyGhosttyFontFamilies("config-file = old.conf\nconfig-file =\nconfig-file = fonts.conf\n");
+    expect(result.includes).toEqual(["fonts.conf"]);
+    expect(result.clearedIncludes).toBe(true);
+  });
 });
 
 describe("resolveGhosttyInclude", () => {
@@ -88,6 +94,30 @@ describe("readGhosttyFontFamilies", () => {
     writeFileSync(join(dir, "config"), "font-family = A\nconfig-file = sub/b.conf\n");
     writeFileSync(join(dir, "sub", "b.conf"), "font-family = B\nconfig-file = ../config\nconfig-file = ?missing.conf\n");
     expect(readGhosttyFontFamilies([join(dir, "config")])).toEqual(["A", "B"]);
+  });
+
+  it("processes nested includes after their siblings (shared queue order)", () => {
+    // Ghostty loads a, b, then c (queued by a), so c's reset wins over b.
+    writeFileSync(join(dir, "config"), "config-file = a.conf\nconfig-file = b.conf\n");
+    writeFileSync(join(dir, "a.conf"), "config-file = c.conf\n");
+    writeFileSync(join(dir, "b.conf"), 'font-family = ""\nfont-family = B Mono\n');
+    writeFileSync(join(dir, "c.conf"), 'font-family = ""\nfont-family = C Mono\n');
+    expect(readGhosttyFontFamilies([join(dir, "config")])).toEqual(["C Mono"]);
+  });
+
+  it("loads every root before any include", () => {
+    mkdirSync(join(dir, "r2"));
+    writeFileSync(join(dir, "config"), "font-family = Root One\nconfig-file = inc.conf\n");
+    writeFileSync(join(dir, "inc.conf"), 'font-family = ""\nfont-family = Included\n');
+    writeFileSync(join(dir, "r2", "config"), "font-family = Root Two\n");
+    expect(readGhosttyFontFamilies([join(dir, "config"), join(dir, "r2", "config")])).toEqual(["Included"]);
+  });
+
+  it("drops pending includes when an empty config-file is seen", () => {
+    writeFileSync(join(dir, "config"), "config-file = old.conf\nconfig-file =\nconfig-file = fonts.conf\n");
+    writeFileSync(join(dir, "old.conf"), "font-family = Old Mono\n");
+    writeFileSync(join(dir, "fonts.conf"), "font-family = New Mono\n");
+    expect(readGhosttyFontFamilies([join(dir, "config")])).toEqual(["New Mono"]);
   });
 });
 

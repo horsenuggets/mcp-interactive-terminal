@@ -10,8 +10,10 @@ import { quoteFontFamily } from "./font-stack.js";
 
 export interface GhosttyConfigEntries {
   families: string[];
-  /** `config-file` references in the order they appear, as written. */
+  /** `config-file` references after the last reset, in order, as written. */
   includes: string[];
+  /** True if an empty `config-file =` cleared the include list in this file. */
+  clearedIncludes: boolean;
 }
 
 function unquoteValue(value: string): string {
@@ -23,14 +25,15 @@ function unquoteValue(value: string): string {
 
 /**
  * Applies the `font-family` entries in one Ghostty config file to `families`, in
- * order, and collects its `config-file` references. `font-family` is repeatable:
- * each entry appends a fallback, and an empty value clears everything so far.
+ * order, and collects its `config-file` references. Both keys are repeatable:
+ * each entry appends, and an empty value clears everything accumulated so far.
  */
 export function applyGhosttyFontFamilies(
   text: string,
   families: string[] = [],
 ): GhosttyConfigEntries {
   const includes: string[] = [];
+  let clearedIncludes = false;
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.startsWith("#")) continue;
@@ -38,7 +41,12 @@ export function applyGhosttyFontFamilies(
     if (!match) continue;
     const raw = match[2]!.trim();
     if (match[1] === "config-file") {
-      if (raw !== "") includes.push(raw);
+      if (raw === "") {
+        includes.length = 0;
+        clearedIncludes = true;
+      } else {
+        includes.push(raw);
+      }
       continue;
     }
     const value = unquoteValue(raw);
@@ -48,7 +56,7 @@ export function applyGhosttyFontFamilies(
       families.push(value);
     }
   }
-  return { families, includes };
+  return { families, includes, clearedIncludes };
 }
 
 /**
@@ -72,24 +80,20 @@ export function resolveGhosttyInclude(
 }
 
 /**
- * Loads a config file, then its `config-file` includes in order, matching
- * Ghostty: includes take effect after the file that references them. Files
- * already on the load chain are skipped so include cycles terminate.
+ * Loads one config file into `families` and queues its includes. An empty
+ * `config-file =` drops every include still waiting in the queue.
  */
-function loadGhosttyConfig(path: string, families: string[], chain: Set<string>): void {
-  if (chain.has(path)) return;
+function loadGhosttyConfigFile(path: string, families: string[], queue: string[]): boolean {
   let text: string;
   try {
     text = readFileSync(path, "utf-8");
   } catch {
-    return;
+    return false;
   }
-  chain.add(path);
-  const { includes } = applyGhosttyFontFamilies(text, families);
-  for (const raw of includes) {
-    loadGhosttyConfig(resolveGhosttyInclude(raw, path).path, families, chain);
-  }
-  chain.delete(path);
+  const { includes, clearedIncludes } = applyGhosttyFontFamilies(text, families);
+  if (clearedIncludes) queue.length = 0;
+  for (const raw of includes) queue.push(resolveGhosttyInclude(raw, path).path);
+  return clearedIncludes;
 }
 
 /** Ghostty's default config file locations, in the order Ghostty loads them. */
@@ -103,10 +107,28 @@ function ghosttyConfigPaths(): string[] {
   return paths;
 }
 
-/** Reads the Ghostty font families from the given root config files. */
+/**
+ * Reads the Ghostty font families from the given root config files, matching
+ * Ghostty's load order: every root loads first, then one shared include queue
+ * is processed in insertion order (includes found along the way are appended).
+ * Any file already loaded is skipped, so include cycles terminate.
+ */
 export function readGhosttyFontFamilies(rootPaths: string[]): string[] {
   const families: string[] = [];
-  for (const path of rootPaths) loadGhosttyConfig(path, families, new Set());
+  const queue: string[] = [];
+  const loaded = new Set<string>();
+  for (const path of rootPaths) {
+    loaded.add(path);
+    loadGhosttyConfigFile(path, families, queue);
+  }
+  for (let i = 0; i < queue.length; i++) {
+    const path = queue[i]!;
+    if (loaded.has(path)) continue;
+    loaded.add(path);
+    // An empty config-file in this file emptied the queue (keeping only what it
+    // added afterwards), so continue from the start of the new queue.
+    if (loadGhosttyConfigFile(path, families, queue)) i = -1;
+  }
   return families;
 }
 
