@@ -287,7 +287,7 @@ function createServer(cfg?: ServerConfig) {
 
   server.tool(
     "start_recording",
-    "Start capturing the terminal's rendered text at a fixed FPS to a JSONL file. Each line is one frame: { t (ms since start), text (screen contents), cursor }. Use to record exactly what's on screen during a UI interaction (scroll, animation, redraw) so frames can be diffed afterwards to detect visual jumps. Call stop_recording to end. Only one recording per session at a time — starting a new one cancels the previous.",
+    "Start capturing the terminal's rendered text at a fixed FPS to a JSONL file. Each line is one frame: { t (ms since start), text (screen contents, one line per screen row with blank rows kept, so line N is always row N), cursor }. Use to record exactly what's on screen during a UI interaction (scroll, animation, redraw) so frames can be diffed afterwards to detect visual jumps. Call stop_recording to end. Only one recording per session at a time — starting a new one cancels the previous.",
     startRecordingSchema.shape,
     { title: "Start Recording", readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async ({ session_id, path, fps }) => {

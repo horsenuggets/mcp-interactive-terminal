@@ -4,6 +4,11 @@
  * Captures the rendered terminal text at a fixed FPS to a JSONL file. Each
  * line is one frame: `{ "t": <ms-since-record-start>, "text": "<screen>" }`.
  *
+ * Frames are untrimmed, one line per screen row, so line N is always screen row N.
+ * Trimming blank rows (as read_output does) would shift a whole frame up whenever
+ * its top row happened to be blank, which looks exactly like the visual jumps a
+ * recording is meant to catch.
+ *
  * Pure text capture (no PNG) — cheap enough to run at 60fps on a hot loop,
  * and trivial to diff afterwards to find visual jumps:
  *
@@ -96,7 +101,7 @@ export async function handleStartRecording(
 
   const tick = (): void => {
     try {
-      const screen = session.terminal.readScreen(false, false);
+      const screen = session.terminal.readScreen(false, false, false);
       const cursor = session.terminal.getCursorPosition();
       const entry = JSON.stringify({
         t: +(performance.now() - startedAt).toFixed(2),
