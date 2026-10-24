@@ -123,7 +123,12 @@ export interface TerminalWrapper {
   /** The character that means "execute/enter" — \r for PTY, \n for pipe */
   get enterKey(): string;
   write(data: string): void;
-  readScreen(fullScreen?: boolean, rawAnsi?: boolean): { text: string; topOffset: number };
+  /**
+   * Read the screen as text. Blank rows are trimmed from both ends unless `trim` is
+   * false, and `topOffset` counts the leading rows removed. Untrimmed PTY reads return
+   * exactly one line per screen row.
+   */
+  readScreen(fullScreen?: boolean, rawAnsi?: boolean, trim?: boolean): { text: string; topOffset: number };
   /** Get the cursor position as {col, row} (1-indexed). Returns null in pipe mode. */
   getCursorPosition(): { col: number; row: number } | null;
   /** Number of terminal cells a string occupies, per the emulator's active

@@ -22,6 +22,7 @@ import { createViewerSocket } from "./viewer-socket.js";
 import { renderScreenToPng } from "./skia-render.js";
 import { detectPromptPattern, endsWithPrompt } from "./utils/output-detector.js";
 import { stripAnsi } from "./utils/sanitizer.js";
+import { trimBlankRows } from "./utils/trim-rows.js";
 import { wrapCommand, isSandboxActive } from "./sandbox.js";
 
 const OUTPUT_SETTLE_MS = 300;
@@ -323,7 +324,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
       ptyProcess.write(data);
     },
 
-    readScreen(fullScreen = false, rawAnsi = false): { text: string; topOffset: number } {
+    readScreen(fullScreen = false, rawAnsi = false, trim = true): { text: string; topOffset: number } {
       const buffer = xterm.buffer.active;
       const lines: string[] = [];
       // Raw mode only, parallel to lines: whether the line has inverse cells.
@@ -415,19 +416,11 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
       // A raw line holding inverse cells paints the foreground color even when
       // its text is only spaces, so it isn't blank. Plain-text lines track none.
       const isBlank = (i: number): boolean => !paintedLines[i] && lines[i]!.replace(/\x1b\[[0-9;]*m/g, "").trim() === "";
-      while (lines.length > 0 && isBlank(lines.length - 1)) {
-        lines.pop();
-        paintedLines.length = Math.min(paintedLines.length, lines.length);
-      }
-      // Count and strip leading blank rows, report offset so callers can
-      // compute real screen coordinates for mouse events.
-      let topOffset = 0;
-      while (lines.length > 0 && isBlank(0)) {
-        lines.shift();
-        paintedLines.shift();
-        topOffset++;
-      }
-      return { text: lines.join("\n"), topOffset };
+      // Leading rows are counted in topOffset so callers can compute real screen
+      // coordinates for mouse events. Untrimmed reads keep one line per row.
+      if (!trim) return { text: lines.join("\n"), topOffset: 0 };
+      const trimmed = trimBlankRows(lines, isBlank);
+      return { text: trimmed.lines.join("\n"), topOffset: trimmed.topOffset };
     },
 
     getScreenCells(trim = true): { rows: RenderCell[][]; topOffset: number } | null {
