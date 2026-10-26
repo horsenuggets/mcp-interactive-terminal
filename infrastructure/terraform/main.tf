@@ -80,7 +80,8 @@ resource "github_repository_ruleset" "main" {
 }
 
 # Keeps Copilot code review at the Lite effort level, which costs several times fewer AI
-# credits than the Balanced default, and corrects drift on apply.
+# credits than the Balanced default, and warns on
+# every plan if the setting drifts.
 module "copilot_review" {
   source        = "https://github.com/horsenuggets/luau-cicd/archive/a342a72d078bca2ff7f529bff4a68a68743b313a.tar.gz//luau-cicd-a342a72d078bca2ff7f529bff4a68a68743b313a/Terraform/Modules/CopilotReview"
   repository    = github_repository.repo.full_name
