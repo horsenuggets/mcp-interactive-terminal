@@ -79,21 +79,11 @@ resource "github_repository_ruleset" "main" {
   }
 }
 
-# The GitHub provider can't manage Copilot code review settings yet, so this calls the
-# REST endpoint directly to run automatic reviews at the Lite effort level. It re-runs
-# whenever the repo or the effort level changes. Lite reviews cost several times fewer AI
-# credits than the Balanced default.
-resource "terraform_data" "copilot_review_effort" {
-  triggers_replace = [github_repository.repo.full_name, "lite"]
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      : "$${GITHUB_TOKEN:?GITHUB_TOKEN must be set to update Copilot code review settings}"
-      curl --fail-with-body --silent --show-error -X PATCH \
-        -H "Authorization: Bearer $GITHUB_TOKEN" \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/${github_repository.repo.full_name}/copilot/code-review/settings" \
-        -d '{"review_effort":"lite"}'
-    EOT
-  }
+# Keeps Copilot code review at the Lite effort level, which costs several times fewer AI
+# credits than the Balanced default, and warns on
+# every plan if the setting drifts.
+module "copilot_review" {
+  source        = "https://github.com/horsenuggets/luau-cicd/archive/a342a72d078bca2ff7f529bff4a68a68743b313a.tar.gz//luau-cicd-a342a72d078bca2ff7f529bff4a68a68743b313a/Terraform/Modules/CopilotReview"
+  repository    = github_repository.repo.full_name
+  review_effort = "lite"
 }
