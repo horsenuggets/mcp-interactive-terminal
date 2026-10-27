@@ -213,6 +213,22 @@ Safe to auto-approve.
 
 Supported: `ctrl+c`, `ctrl+d`, `ctrl+z`, `ctrl+l`, `ctrl+r`, `tab`, `escape`, `up`, `down`, `left`, `right`, `enter`, `backspace`, `delete`, `home`, `end`, and more.
 
+### `resize_session` — Resize the terminal
+
+```json
+{ "session_id": "a1b2c3d4", "cols": 80, "rows": 24 }
+→ { "cols": 80, "rows": 24, "output": "user@host:~/\n> \n\n..." }
+```
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `session_id` | Yes | — | Target session |
+| `cols` | Yes | — | New terminal columns (10 to 300) |
+| `rows` | Yes | — | New terminal rows (5 to 100) |
+| `settle_ms` | No | `300` | How long to wait for the program to redraw before reading the screen |
+
+Resizes both the PTY and the emulator, so the program gets `SIGWINCH` just like a window resize or font zoom. The returned screen keeps blank rows, which makes it useful for reproducing resize and reflow bugs. In pipe mode, resizing is a no-op.
+
 ### `confirm_dangerous_command` — Two-step safety confirmation
 
 ```json

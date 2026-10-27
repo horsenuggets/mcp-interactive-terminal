@@ -13,6 +13,7 @@ export type AuditEvent =
   | "server_stop"
   | "session_create"
   | "session_close"
+  | "session_resize"
   | "session_idle_timeout"
   | "session_ttl_timeout"
   | "command"
