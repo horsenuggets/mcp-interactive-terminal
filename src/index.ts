@@ -20,6 +20,7 @@ import { sendCommandSchema, handleSendCommand } from "./tools/send-command.js";
 import { readOutputSchema, handleReadOutput } from "./tools/read-output.js";
 import { handleListSessions } from "./tools/list-sessions.js";
 import { closeSessionSchema, handleCloseSession } from "./tools/close-session.js";
+import { resizeSessionSchema, handleResizeSession } from "./tools/resize-session.js";
 import { sendControlSchema, handleSendControl } from "./tools/send-control.js";
 import { sendMouseSchema, handleSendMouse } from "./tools/send-mouse.js";
 import {
@@ -164,6 +165,27 @@ function createServer(cfg?: ServerConfig) {
       try {
         const result = await handleCloseSession(
           { session_id, signal },
+          sessionManager,
+        );
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Error: ${(err as Error).message}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "resize_session",
+    "Resize a session's terminal (PTY + emulator), which sends SIGWINCH to the program like a window resize or font zoom would. Waits settle_ms for the redraw, then returns the full viewport with blank rows kept. Use to reproduce resize/reflow bugs.",
+    resizeSessionSchema.shape,
+    { title: "Resize Session", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async ({ session_id, cols, rows, settle_ms }) => {
+      try {
+        const result = await handleResizeSession(
+          { session_id, cols, rows, settle_ms },
           sessionManager,
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };

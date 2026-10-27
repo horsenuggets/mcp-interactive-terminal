@@ -216,6 +216,13 @@ export interface CloseSessionOutput {
   success: boolean;
 }
 
+export interface ResizeSessionOutput {
+  cols: number;
+  rows: number;
+  /** The full viewport after the redraw, with blank rows kept. */
+  output: string;
+}
+
 export interface SendControlInput {
   session_id: string;
   control: string;
