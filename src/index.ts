@@ -187,6 +187,7 @@ function createServer(cfg?: ServerConfig) {
         const result = await handleResizeSession(
           { session_id, cols, rows, settle_ms },
           sessionManager,
+          config,
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
