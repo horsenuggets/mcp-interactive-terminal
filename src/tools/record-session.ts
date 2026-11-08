@@ -45,7 +45,7 @@ export const startRecordingSchema = z.object({
       "Absolute path of the output JSONL file. One frame per line: " +
         "{ t, text, cursor }. Overwritten on start.",
     ),
-  fps: z
+  fps: z.coerce
     .number()
     .int()
     .min(1)

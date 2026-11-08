@@ -241,10 +241,10 @@ export const pasteSchema = z.object({
   image_path: z.string().optional().describe(
     "Absolute path to an image file to paste. The image is copied to the system clipboard, then an EMPTY bracketed paste sequence is sent — this is exactly what real terminals emit when a user presses Cmd+V / Ctrl+V with an image on the clipboard. TUI apps that support image paste (CoderFish, Claude Code) will read the clipboard themselves. Mutually exclusive with text."
   ),
-  timeout_ms: z.number().int().min(100).max(60000).optional().default(2000).describe(
+  timeout_ms: z.coerce.number().int().min(100).max(60000).optional().default(2000).describe(
     "How long to wait for the app to react and render after the paste sequence."
   ),
-  count: z.number().int().min(1).max(20).optional().default(1).describe(
+  count: z.coerce.number().int().min(1).max(20).optional().default(1).describe(
     "Number of paste sequences to write in a single PTY write. Use >1 to reproduce rapid back-to-back paste races (e.g. user mashing Cmd+V faster than the app can finish reading the clipboard)."
   ),
 });

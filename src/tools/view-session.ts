@@ -3,10 +3,11 @@ import { execSync, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { SessionManager } from "../session-manager.js";
+import { booleanParam } from "../utils/params.js";
 
 export const viewSessionSchema = z.object({
   session_id: z.string().describe("The session ID to view"),
-  foreground: z.boolean().optional().default(false)
+  foreground: booleanParam().optional().default(false)
     .describe("Bring the viewer window to the front and capture focus when it opens"),
 });
 

@@ -2,13 +2,14 @@ import { z } from "zod";
 import type { SessionManager } from "../session-manager.js";
 import type { ServerConfig, ReadOutputOutput } from "../types.js";
 import { sanitize } from "../utils/sanitizer.js";
+import { booleanParam } from "../utils/params.js";
 import { redactSecrets } from "../utils/secret-redactor.js";
 
 export const readOutputSchema = z.object({
   session_id: z.string().describe("The session ID to read output from"),
-  full_screen: z.boolean().optional().default(false)
+  full_screen: booleanParam().optional().default(false)
     .describe("Read full scrollback history instead of just the visible screen"),
-  raw_ansi: z.boolean().optional().default(false)
+  raw_ansi: booleanParam().optional().default(false)
     .describe("Include ANSI color/style escape codes in the output (useful for comparing terminal rendering)"),
 });
 
