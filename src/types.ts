@@ -68,7 +68,10 @@ export interface Session {
   rows: number;
   createdAt: Date;
   lastActivity: Date;
+  /** Wall-clock time the session is killed at, pushed out by every tool call on it. */
   deadlineMs: number | null;
+  /** How far each tool call pushes the deadline out (the session's timeout_seconds). */
+  ttlMs: number;
   isAlive: boolean;
   terminal: TerminalWrapper;
   pendingDangerousCommands: Set<string>;

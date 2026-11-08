@@ -333,7 +333,7 @@ function createServer(cfg?: ServerConfig) {
     { title: "Stop Recording", readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async ({ session_id }) => {
       try {
-        const result = await handleStopRecording({ session_id });
+        const result = await handleStopRecording({ session_id }, sessionManager);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {

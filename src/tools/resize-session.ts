@@ -6,9 +6,9 @@ import { redactSecrets } from "../utils/secret-redactor.js";
 
 export const resizeSessionSchema = z.object({
   session_id: z.string().describe("The session ID to resize"),
-  cols: z.number().int().min(10).max(300).describe("New terminal width in columns"),
-  rows: z.number().int().min(5).max(100).describe("New terminal height in rows"),
-  settle_ms: z.number().int().min(0).max(10000).default(300)
+  cols: z.coerce.number().int().min(10).max(300).describe("New terminal width in columns"),
+  rows: z.coerce.number().int().min(5).max(100).describe("New terminal height in rows"),
+  settle_ms: z.coerce.number().int().min(0).max(10000).default(300)
     .describe("How long to wait for the program to redraw after SIGWINCH before returning the screen (ms)"),
 });
 

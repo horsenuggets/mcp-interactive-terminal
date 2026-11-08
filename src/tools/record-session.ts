@@ -45,7 +45,7 @@ export const startRecordingSchema = z.object({
       "Absolute path of the output JSONL file. One frame per line: " +
         "{ t, text, cursor }. Overwritten on start.",
     ),
-  fps: z
+  fps: z.coerce
     .number()
     .int()
     .min(1)
@@ -68,6 +68,7 @@ export async function handleStartRecording(
   if (!session.isAlive) {
     throw new Error(`Session "${args.session_id}" is not alive`);
   }
+  sessionManager.touchSession(args.session_id);
   // Stop any existing recording for this session so we don't end up with
   // two timers writing to the same target (or different targets) and
   // leaking the original timer past process exit.
@@ -133,6 +134,7 @@ export type StopRecordingArgs = z.infer<typeof stopRecordingSchema>;
 
 export async function handleStopRecording(
   args: StopRecordingArgs,
+  sessionManager: SessionManager,
 ): Promise<{
   ok: true;
   path: string;
@@ -147,6 +149,8 @@ export async function handleStopRecording(
   }
   clearInterval(rec.timer);
   RECORDINGS.delete(args.session_id);
+  // The session may have ended while recording, which touchSession ignores.
+  sessionManager.touchSession(args.session_id);
   const durationMs = +(performance.now() - rec.startedAt).toFixed(2);
   let fileSize = 0;
   try {

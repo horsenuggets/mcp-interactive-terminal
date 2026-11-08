@@ -165,4 +165,24 @@ describe("SessionManager", () => {
       expect(manager.isRealPathAllowed(join(allowed, "shot.png"))).toBe(false);
     });
   });
+
+  describe("session timeout", () => {
+    itPty("counts from the last call, so an active session outlives its timeout", async () => {
+      manager = new SessionManager(defaultConfig);
+      const session = await manager.createSession({ command: BASH, timeoutSeconds: 60 });
+      // Pretend most of the timeout already passed, then use the session.
+      session.deadlineMs = Date.now() + 1000;
+      manager.touchSession(session.id);
+      expect(session.deadlineMs! - Date.now()).toBeGreaterThan(59_000);
+    }, 10000);
+
+    itPty("defaults to five minutes from the last call", async () => {
+      manager = new SessionManager(defaultConfig);
+      const session = await manager.createSession({ command: BASH });
+      manager.touchSession(session.id);
+      const remaining = session.deadlineMs! - Date.now();
+      expect(remaining).toBeGreaterThan(299_000);
+      expect(remaining).toBeLessThanOrEqual(300_000);
+    }, 10000);
+  });
 });

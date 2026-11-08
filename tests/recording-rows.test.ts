@@ -59,14 +59,20 @@ describe("start_recording", () => {
         return { text: trimmed.lines.join("\n"), topOffset: trimmed.topOffset };
       },
     };
-    const sessionManager = { getSession: () => ({ isAlive: true, terminal }) } as unknown as SessionManager;
+    const touched: string[] = [];
+    const sessionManager = {
+      getSession: () => ({ isAlive: true, terminal }),
+      touchSession: (id: string) => touched.push(id),
+    } as unknown as SessionManager;
     // Frame 0 is captured synchronously on start.
     await handleStartRecording({ fps: 1, path, session_id: "s" }, sessionManager);
-    await handleStopRecording({ session_id: "s" });
+    await handleStopRecording({ session_id: "s" }, sessionManager);
     const frames = readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(frames.length).toBeGreaterThan(0);
     expect(calls.every((trim) => trim === false)).toBe(true);
     expect(frames[0].text.split("\n")).toEqual(screen);
+    // Starting and stopping both count as activity, so neither lets the timeout lapse.
+    expect(touched).toEqual(["s", "s"]);
   });
 });
 

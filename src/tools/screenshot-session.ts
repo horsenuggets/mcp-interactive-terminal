@@ -40,6 +40,7 @@ export async function handleScreenshotSession(
   }
 
   const session = sessionManager.getSession(args.session_id);
+  sessionManager.touchSession(args.session_id);
   const terminal = session.terminal;
 
   if (terminal.mode !== "pty") {

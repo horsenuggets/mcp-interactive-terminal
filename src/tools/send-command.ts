@@ -6,6 +6,7 @@ import { sanitize } from "../utils/sanitizer.js";
 import { detectDanger } from "../utils/danger-detector.js";
 import { redactSecrets } from "../utils/secret-redactor.js";
 import { audit } from "../utils/audit-logger.js";
+import { booleanParam } from "../utils/params.js";
 
 /**
  * Extract absolute paths from a command string and check them against allowed paths.
@@ -37,13 +38,13 @@ function findDisallowedPath(input: string, sessionManager: SessionManager): stri
 export const sendCommandSchema = z.object({
   session_id: z.string().describe("The session ID to send input to"),
   input: z.string().describe("The command/input to send"),
-  newline: z.boolean().optional().default(true)
+  newline: booleanParam().optional().default(true)
     .describe("Append a newline (submit) after the input. Set to false to type raw text into an input field without submitting — useful for TUI apps where you want to fill an input before triggering other events like mouse clicks."),
-  timeout_ms: z.number().min(100).max(60000).optional().default(5000)
+  timeout_ms: z.coerce.number().min(100).max(60000).optional().default(5000)
     .describe("Max time to wait for output (ms)"),
-  max_output_chars: z.number().min(100).optional()
+  max_output_chars: z.coerce.number().min(100).optional()
     .describe("Override max output characters for this call"),
-  raw_ansi: z.boolean().optional().default(false)
+  raw_ansi: booleanParam().optional().default(false)
     .describe("Include ANSI color/style escape codes in the output (useful for comparing terminal rendering)"),
 });
 

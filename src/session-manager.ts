@@ -95,6 +95,7 @@ export class SessionManager {
       createdAt: new Date(),
       lastActivity: new Date(),
       deadlineMs: Date.now() + ttlSeconds * 1000,
+      ttlMs: ttlSeconds * 1000,
       isAlive: true,
       terminal,
       pendingDangerousCommands: new Set(),
@@ -172,6 +173,9 @@ export class SessionManager {
     const session = this.sessions.get(id);
     if (session) {
       session.lastActivity = new Date();
+      // The timeout counts from the last call, not from creation. A fixed deadline
+      // killed sessions mid-use once timeout_seconds had passed since they started.
+      session.deadlineMs = Date.now() + session.ttlMs;
       if (this.config.idleTimeout > 0) {
         this.resetIdleTimer(id);
       }

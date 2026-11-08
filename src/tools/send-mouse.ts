@@ -78,29 +78,29 @@ export const sendMouseSchema = z.object({
         "or sweeps along a line from (col,row) to (to_col,to_row) if both are supplied. " +
         "Used to trigger onMouseEnter / hover highlight UI without clicking.",
     ),
-  col: z
+  col: z.coerce
     .number()
     .int()
     .min(1)
     .describe("1-indexed column (x coordinate) of the click or drag start."),
-  row: z
+  row: z.coerce
     .number()
     .int()
     .min(1)
     .describe("1-indexed row (y coordinate) of the click or drag start."),
-  to_col: z
+  to_col: z.coerce
     .number()
     .int()
     .min(1)
     .optional()
     .describe("Drag end column (required for 'drag' action)."),
-  to_row: z
+  to_row: z.coerce
     .number()
     .int()
     .min(1)
     .optional()
     .describe("Drag end row (required for 'drag' action)."),
-  wait_ms: z
+  wait_ms: z.coerce
     .number()
     .int()
     .min(0)
