@@ -42,6 +42,7 @@ export async function handleViewSession(
   sessionManager: SessionManager,
 ): Promise<{ success: boolean; viewer_socket: string }> {
   const session = sessionManager.getSession(args.session_id);
+  sessionManager.touchSession(args.session_id);
   const socketPath = session.terminal.viewerSocketPath;
 
   if (!socketPath) {

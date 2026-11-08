@@ -20,6 +20,7 @@ export async function handleReadOutput(
   config: ServerConfig,
 ): Promise<ReadOutputOutput> {
   const session = sessionManager.getSession(args.session_id);
+  sessionManager.touchSession(args.session_id);
 
   const screen = session.terminal.readScreen(args.full_screen, args.raw_ansi);
   let output = sanitize(screen.text, { maxChars: config.maxOutput, keepAnsi: args.raw_ansi });
