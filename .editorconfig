@@ -1,6 +1,6 @@
 root = true
 
-[*.{tf,tfvars,tftest.hcl,tfmock.hcl,tfquery.hcl}]
+[*.{hcl,tf,tfvars}]
 charset = utf-8
 end_of_line = lf
 indent_size = 4
