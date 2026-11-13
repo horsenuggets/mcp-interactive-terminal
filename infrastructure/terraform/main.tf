@@ -18,7 +18,7 @@ locals {
     repo_name = "mcp-interactive-terminal"
 
     required_checks = [
-        "Build & Test",
+        "Build & Test"
     ]
 }
 
