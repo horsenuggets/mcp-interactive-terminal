@@ -33,9 +33,9 @@ provider "github" {
 locals {
     repo_name = "mcp-interactive-terminal"
 
-    # Must match the job `name:` fields in .github/workflows/ci.yml.
+    # Must match the job `name:` fields in .github/workflows/main.ci.yml.
     main_checks = [
-        "Build & Test"
+        "build-and-test"
     ]
 }
 
@@ -100,7 +100,7 @@ resource "github_repository_ruleset" "main" {
                 for_each = local.main_checks
                 content {
                     context = required_check.value
-                    integration_id = 0
+                    integration_id = 15368
                 }
             }
         }
