@@ -162,6 +162,9 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   });
 
   let isAlive = true;
+  let processExited = false;
+  let disposed = false;
+  let terminationTimer: ReturnType<typeof setTimeout> | null = null;
   let promptPattern: RegExp | null = null;
   let outputBuffer = "";
   let lastOutputTime = Date.now();
@@ -308,6 +311,8 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
 
   ptyProcess.onExit(() => {
     isAlive = false;
+    processExited = true;
+    if (terminationTimer) { clearTimeout(terminationTimer); terminationTimer = null; }
   });
 
   const wrapper: TerminalWrapper = {
@@ -525,7 +530,19 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
     },
 
     dispose() {
-      if (isAlive) { ptyProcess.kill(); isAlive = false; }
+      if (disposed) return;
+      disposed = true;
+      isAlive = false;
+      // Both native backends expose destroy(), but node-pty omits it from IPty.
+      (ptyProcess as typeof ptyProcess & { destroy(): void }).destroy();
+      if (!processExited && process.platform !== "win32") {
+        // A sent signal does not prove exit. Bound cleanup for shells that ignore it.
+        terminationTimer = setTimeout(() => {
+          terminationTimer = null;
+          if (!processExited) ptyProcess.kill("SIGKILL");
+        }, 1000);
+        terminationTimer.unref();
+      }
       if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
       replyDisposable.dispose();
       viewerSocket?.close();

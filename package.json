@@ -66,7 +66,7 @@
   },
   "optionalDependencies": {
     "@anthropic-ai/sandbox-runtime": "^0.0.37",
-    "node-pty": "^1.0.0"
+    "node-pty": "1.2.0-beta.18"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
