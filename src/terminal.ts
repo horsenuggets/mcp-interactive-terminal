@@ -21,6 +21,7 @@ import {
 import { cellForegroundAlpha, installForegroundAlpha, OPAQUE } from "./foreground-alpha.js";
 import { createViewerSocket } from "./viewer-socket.js";
 import { renderScreenToPng } from "./skia-render.js";
+import { intensitySgr } from "./utils/intensity-sgr.js";
 import { detectPromptPattern, endsWithPrompt } from "./utils/output-detector.js";
 import { stripAnsi } from "./utils/sanitizer.js";
 import { trimBlankRows } from "./utils/trim-rows.js";
@@ -377,8 +378,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
             const italic = c.isItalic();
             const inverse = c.isInverse();
 
-            if (bold !== prevBold) sgr.push(bold ? "1" : "22");
-            if (dim !== prevDim) sgr.push(dim ? "2" : "22");
+            sgr.push(...intensitySgr({ bold: !!prevBold, dim: !!prevDim }, { bold: !!bold, dim: !!dim }));
             if (italic !== prevItalic) sgr.push(italic ? "3" : "23");
             if (inverse !== prevInverse) sgr.push(inverse ? "7" : "27");
 
