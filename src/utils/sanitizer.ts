@@ -8,8 +8,10 @@
  * Strip any remaining ANSI escape sequences that xterm didn't consume.
  */
 export function stripAnsi(text: string): string {
+  // CSI sequences, including colon sub-parameters, private markers like "?", and
+  // non-letter final bytes like the "~" in bracketed paste markers.
   // eslint-disable-next-line no-control-regex
-  return text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+  return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/\x1b\][^\x07]*\x07/g, "")     // OSC sequences
     .replace(/\x1b\(B/g, "")                  // Character set selection
     .replace(/\x1b/g, "");                     // Lone escapes

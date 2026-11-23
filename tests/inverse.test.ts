@@ -86,4 +86,15 @@ describe("inverse cells from a live terminal", () => {
     // Plain-text trimming is unchanged: the space-only rows still trim away.
     expect(plain.text).toBe("");
   }, 10000);
+
+  itPty("keeps faint text faint when bold turns off in raw output", async () => {
+    terminal = await createTerminal({ command: BASH });
+    // Bold and faint, then faint only, then plain.
+    terminal.write("printf 'P\\033[1;2mQ\\033[22;2mR\\033[0mS\\n'\n");
+    await terminal.waitForOutput(3000);
+    await new Promise((r) => setTimeout(r, 300));
+
+    const raw = terminal.readScreen(false, true).text;
+    expect(raw).toContain("P\x1b[1;2mQ\x1b[22;2mR\x1b[22mS");
+  }, 10000);
 });

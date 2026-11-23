@@ -111,6 +111,8 @@ export interface RenderCell {
   bg: CellColorSpec;
   bold: boolean;
   dim: boolean;
+  /** Glyph opacity from 0 to 255, set with the RGBA SGR extension (`38:6::R:G:B:A`). */
+  fgAlpha: number;
   /** SGR 7: the renderer swaps fg and bg, defaults included. */
   inverse: boolean;
 }
