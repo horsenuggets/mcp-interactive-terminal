@@ -86,6 +86,14 @@ export function cellPaintColors(
   return { bg: resolve(cell.bg, null), fg: resolve(cell.fg, colors.foreground) ?? colors.foreground };
 }
 
+/**
+ * The opacity to draw a cell's glyph with, from 0 to 1. Faint text is half as opaque,
+ * and multiplies the opacity of an RGBA foreground, as in GhosttyX.
+ */
+export function glyphOpacity(cell: Pick<RenderCell, "dim" | "fgAlpha">): number {
+  return (cell.dim ? 0.5 : 1) * (cell.fgAlpha / 255);
+}
+
 // Which of the four cell quadrants each Block-Elements quadrant glyph fills,
 // ordered [upperLeft, upperRight, lowerLeft, lowerRight].
 const QUADRANTS: Record<number, [boolean, boolean, boolean, boolean]> = {
@@ -309,9 +317,10 @@ export function renderScreenToPng(terminal: TerminalWrapper, opts: RenderOptions
     for (const cell of cellRows[row]!) {
       if (cell.chars !== " " && cell.chars !== "") {
         ctx.fillStyle = cellPaintColors(cell, resolveColor, theme).fg;
-        // SGR 2 (dim/faint): draw at half opacity, as most terminals do. Set
-        // before both paths; drawBlockElement multiplies shade alpha onto it.
-        ctx.globalAlpha = cell.dim ? 0.5 : 1;
+        // SGR 2 (dim/faint) draws at half opacity, as most terminals do, and
+        // multiplies any RGBA foreground opacity. Set before both paths;
+        // drawBlockElement multiplies shade alpha onto it.
+        ctx.globalAlpha = glyphOpacity(cell);
         // Block Elements (U+2580–U+259F) are painted as rects that tile the
         // whole cell, so solid mascots and bars have no seams between cells.
         // Bounds are rounded with the same formula for every cell, so adjacent

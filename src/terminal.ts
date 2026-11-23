@@ -18,6 +18,7 @@ import {
   type RenderCell,
   type TerminalWrapper,
 } from "./types.js";
+import { cellForegroundAlpha, installForegroundAlpha, OPAQUE } from "./foreground-alpha.js";
 import { createViewerSocket } from "./viewer-socket.js";
 import { renderScreenToPng } from "./skia-render.js";
 import { detectPromptPattern, endsWithPrompt } from "./utils/output-detector.js";
@@ -124,6 +125,9 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
   const cols = options.cols ?? DEFAULT_COLS;
   const rows = options.rows ?? DEFAULT_ROWS;
   const xterm = new Terminal({ cols, rows, scrollback: 1000, allowProposedApi: true });
+  if (!installForegroundAlpha(xterm)) {
+    console.error("[mcp-terminal] Foreground text opacity is unavailable with this xterm.js version.");
+  }
 
   // Character-width table. Modern terminals (Ghostty `unicode`, iTerm2,
   // WezTerm) use grapheme-cluster widths; the "15-graphemes" version matches
@@ -357,6 +361,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
           let lineStr = "";
           let painted = false;
           let prevFg = -1, prevBg = -1, prevBold = 0, prevDim = 0, prevItalic = 0, prevInverse = 0;
+          let prevAlpha = OPAQUE;
           const cell = (buffer as any).getNullCell ? (buffer as any).getNullCell() : undefined;
           for (let x = 0; x < bufLine.length; x++) {
             const c = cell ? (bufLine.getCell(x, cell), cell) : bufLine.getCell(x);
@@ -377,12 +382,16 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
             if (italic !== prevItalic) sgr.push(italic ? "3" : "23");
             if (inverse !== prevInverse) sgr.push(inverse ? "7" : "27");
 
-            // Foreground
+            // Foreground, with an RGBA color when the text is translucent
             let fg = -1;
+            const alpha = cellForegroundAlpha(c);
             if (c.isFgRGB()) {
               const v = c.getFgColor();
               fg = v;
-              if (fg !== prevFg) sgr.push(`38;2;${(v >> 16) & 0xff};${(v >> 8) & 0xff};${v & 0xff}`);
+              if (fg !== prevFg || alpha !== prevAlpha) {
+                const r = (v >> 16) & 0xff, g = (v >> 8) & 0xff, b = v & 0xff;
+                sgr.push(alpha === OPAQUE ? `38;2;${r};${g};${b}` : `38:6::${r}:${g}:${b}:${alpha}`);
+              }
             } else if (c.isFgPalette()) {
               fg = c.getFgColor();
               if (fg !== prevFg) sgr.push(`38;5;${fg}`);
@@ -408,6 +417,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
             if (inverse) painted = true;
 
             prevFg = fg; prevBg = bg; prevBold = bold; prevDim = dim; prevItalic = italic; prevInverse = inverse;
+            prevAlpha = alpha;
           }
           // Reset at end of line
           if (prevFg !== -1 || prevBg !== -1 || prevBold || prevDim || prevItalic || prevInverse) {
@@ -420,7 +430,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
 
       // A raw line holding inverse cells paints the foreground color even when
       // its text is only spaces, so it isn't blank. Plain-text lines track none.
-      const isBlank = (i: number): boolean => !paintedLines[i] && lines[i]!.replace(/\x1b\[[0-9;]*m/g, "").trim() === "";
+      const isBlank = (i: number): boolean => !paintedLines[i] && lines[i]!.replace(/\x1b\[[0-9;:]*m/g, "").trim() === "";
       // Leading rows are counted in topOffset so callers can compute real screen
       // coordinates for mouse events. Untrimmed reads keep one line per row.
       if (!trim) return { text: lines.join("\n"), topOffset: 0 };
@@ -466,6 +476,7 @@ async function createPtyTerminal(options: TerminalOptions): Promise<TerminalWrap
               bg: bgSpec(c),
               bold: c.isBold(),
               dim: c.isDim() !== 0,
+              fgAlpha: cellForegroundAlpha(c),
               inverse: c.isInverse() !== 0,
             });
           }
