@@ -16,6 +16,13 @@ describe("stripAnsi", () => {
     expect(stripAnsi("\x1b[2Ahello\x1b[3B")).toBe("hello");
   });
 
+  it("removes colon, private, and non-letter CSI sequences", () => {
+    expect(stripAnsi("\x1b[38:6::1:2:3:64mfaded\x1b[0m")).toBe("faded");
+    expect(stripAnsi("\x1b[?2004hprompt\x1b[?2004l")).toBe("prompt");
+    expect(stripAnsi("\x1b[200~pasted\x1b[201~")).toBe("pasted");
+    expect(stripAnsi("\x1b[>4;1mkeys")).toBe("keys");
+  });
+
   it("removes OSC sequences", () => {
     expect(stripAnsi("\x1b]0;title\x07content")).toBe("content");
   });
